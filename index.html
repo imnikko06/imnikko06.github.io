@@ -94,14 +94,13 @@
       <div class="row justify-content-center align-items-center min-vh-100">
         <div class="col-12 col-md-10 col-lg-8 bg-dark bg-opacity-50 p-4 rounded-4 shadow-sm text-center">
           
-          <form class="row g-3 justify-content-center align-items-center">
+          <form class="row g-3 justify-content-center align-items-center" action="./rooms.html">
             <fieldset class="row g-3 justify-content-center align-items-center border-0 m-0 p-0">
                 <legend class="visually-hidden">Formulario de reserva rápida</legend>
                 
                 <div class="col-auto date-input-wrapper">
                   <label for="checkin" class="visually-hidden">Check-in</label>
-                  <input type="date" class="form-control rounded-pill text-start custom-date-input" id="checkin"
-                    aria-label="Fecha de entrada" />
+                  <input type="date" class="form-control rounded-pill text-start custom-date-input" id="checkin" />
                 </div>
     
                 <div class="col-auto d-flex align-items-center fw-bold text-white" aria-hidden="true">
@@ -110,13 +109,12 @@
     
                 <div class="col-auto date-input-wrapper">
                   <label for="checkout" class="visually-hidden">Check-out</label>
-                  <input type="date" class="form-control rounded-pill text-start custom-date-input" id="checkout"
-                    aria-label="Fecha de salida" />
+                  <input type="date" class="form-control rounded-pill text-start custom-date-input" id="checkout" />
                 </div>
     
                 <div class="col-auto">
                   <label for="adults" class="visually-hidden">Adultos</label>
-                  <select id="adults" class="form-select rounded-pill" style="min-width: 150px" aria-label="Número de adultos">
+                  <select id="adults" class="form-select rounded-pill" style="min-width: 150px">
                     <option selected>1 Adulto</option>
                     <option>2 Adultos</option>
                     <option>3 Adultos</option>
@@ -124,15 +122,16 @@
                 </div>
     
                 <div class="col-auto">
-                  <input type="text" aria-label="Código promocional" class="form-control rounded-pill"
+                  <label for="promo" class="visually-hidden">Código promocional</label>
+                  <input type="text" id="promo" class="form-control rounded-pill"
                     placeholder="Promocode" style="min-width: 150px" />
                 </div>
     
                 <div class="col-auto">
-                  <a href="./rooms.html" class="btn btn-info text-white fw-bold rounded-pill px-4"
-                      style="background-color: #00bcd4; border-color: #00bcd4; text-decoration: none;">
+                  <button type="submit" class="btn btn-info text-white fw-bold rounded-pill px-4"
+                      style="background-color: #00bcd4; border-color: #00bcd4;">
                       Reservar
-                  </a>
+                  </button>
                 </div>
             </fieldset>
           </form>
@@ -297,7 +296,7 @@
                   src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2993.358865277427!2d2.175822276439798!3d41.38801229595578!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x12a4a2fb9faad9a9%3A0x3ae2c7d2d375e3f2!2sMusik%20Boutique%20Hotel!5e0!3m2!1sen!2ses!4v1762507621944!5m2!1sen!2ses"
                   width="100%" height="100%" style="border: 0" allowfullscreen="" loading="lazy"
                   referrerpolicy="no-referrer-when-downgrade">
-                    <p>Su navegador no soporta iframes.</p>
+                    <p>Enlace al mapa de Google Maps</p>
                 </iframe>
               </div>
             </div>
