@@ -25,7 +25,7 @@
         </a>
 
         <button class="navbar-toggler btn btn-outline-primary d-md-none" type="button" data-bs-toggle="offcanvas"
-          data-bs-target="#mobileMenu" aria-controls="mobileMenu" aria-label="Open menu">
+          data-bs-target="#mobileMenu" aria-controls="mobileMenu" aria-label="Abrir menú">
           ☰ Menu
         </button>
 
@@ -58,7 +58,7 @@
     <div class="offcanvas offcanvas-end custom-offcanvas d-md-none" tabindex="-1" id="mobileMenu"
       aria-labelledby="mobileMenuLabel">
       <div class="offcanvas-header justify-content-end p-2">
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Cerrar menú"></button>
       </div>
       <div class="offcanvas-body d-flex flex-column justify-content-center align-items-center p-0">
         <ul class="navbar-nav text-center w-100">
@@ -101,10 +101,9 @@
                 aria-label="Fecha de entrada" />
             </div>
 
-            <div class="col-auto d-flex align-items-center fw-bold text-white">
+            <div class="col-auto d-flex align-items-center fw-bold text-white" aria-hidden="true">
               /
             </div>
-
 
             <div class="col-auto date-input-wrapper">
               <label for="checkout" class="visually-hidden">Check-out</label>
@@ -113,7 +112,8 @@
             </div>
 
             <div class="col-auto">
-              <select class="form-select rounded-pill" style="min-width: 150px" aria-label="Número de adultos">
+              <label for="adults" class="visually-hidden">Adultos</label>
+              <select id="adults" class="form-select rounded-pill" style="min-width: 150px" aria-label="Número de adultos">
                 <option selected>1 Adulto</option>
                 <option>2 Adultos</option>
                 <option>3 Adultos</option>
@@ -126,13 +126,10 @@
             </div>
 
             <div class="col-auto">
-              <a href="./rooms.html">
-                <button class="btn btn-info text-white fw-bold rounded-pill px-4"
-                  style="background-color: #00bcd4; border-color: #00bcd4">
+              <a href="./rooms.html" class="btn btn-info text-white fw-bold rounded-pill px-4"
+                  style="background-color: #00bcd4; border-color: #00bcd4; text-decoration: none;">
                   Reservar
-                </button>
               </a>
-
             </div>
           </form>
 
@@ -144,7 +141,7 @@
       </div>
     </section>
     <section class="text-center">
-      <h2 class="h1"><b>En el corazon de barcelona</b></h2>
+      <h2 class="h1 fw-bold">En el corazon de barcelona</h2>
       <p class="ms-2 me-2">
         Situado en el corazón de Barcelona, ​​cerca del Palau de la Música, el
         hotel boutique de 3 estrellas Musik refleja el espíritu de la ciudad:
@@ -184,12 +181,12 @@
       </div>
 
       <div class="text-center mt-5">
-        <button class="btn-ver">Ver habitaciones</button>
+        <a href="./rooms.html" class="btn-ver text-decoration-none">Ver habitaciones</a>
       </div>
     </section>
     <section id="WhyChooseUs" class="container-fluid py-5">
-      <h2 class="h1 text-center mb-5">
-        <b>¿Por qué elegir Musik Boutique Hotel?</b>
+      <h2 class="h1 text-center mb-5 fw-bold">
+        ¿Por qué elegir Musik Boutique Hotel?
       </h2>
 
       <div class="container" style="max-width: 1000px">
