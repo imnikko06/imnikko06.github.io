@@ -1,71 +1,80 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <title>Detector de Ticket Frontend</title>
-  <style>
-    .wrapper {
-      position: relative;
-      display: inline-block;
-    }
-    video, canvas {
-      width: 480px;
-      height: 360px;
-      border: 2px solid #333;
-    }
-    canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>Detector de Ticket Móvil</title>
+<style>
+  .wrapper {
+    position: relative;
+    display: inline-block;
+  }
+  video, canvas {
+    width: 100%;
+    max-width: 480px;
+    border: 2px solid #333;
+  }
+  canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+</style>
 </head>
 <body>
-  <h2>Detector de Ticket en Tiempo Real (Frontend)</h2>
-  <div class="wrapper">
-    <video id="video" autoplay muted></video>
-    <canvas id="canvas"></canvas>
-  </div>
+<h2>Detector de Ticket en Tiempo Real (Móvil)</h2>
+<div class="wrapper">
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+</div>
 
-  <!-- OpenCV.js -->
-  <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
-  <script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+<script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
-    // Abrir cámara
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+function onOpenCvReady() {
+    console.log('OpenCV.js cargado');
+    startCamera();
+}
+
+async function startCamera() {
+    const constraints = {
+        video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: { ideal: "environment" }
+        }
+    };
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
-      } catch (err) {
+        video.addEventListener('loadedmetadata', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            detectTicket();
+        });
+    } catch (err) {
         alert('Error al acceder a la cámara: ' + err);
-      }
     }
+}
 
-    function onOpenCvReady() {
-      console.log('OpenCV.js cargado');
-      startCamera().then(() => detectTicket());
-    }
+function detectTicket() {
+    const src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    const gray = new cv.Mat();
+    const blurred = new cv.Mat();
+    const edges = new cv.Mat();
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
 
-    function detectTicket() {
-      const src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-      const gray = new cv.Mat();
-      const blurred = new cv.Mat();
-      const edges = new cv.Mat();
-      const contours = new cv.MatVector();
-      const hierarchy = new cv.Mat();
-
-      function processVideo() {
-        if (video.readyState !== video.HAVE_ENOUGH_DATA) {
-          requestAnimationFrame(processVideo);
-          return;
+    function processVideo() {
+        if(video.readyState !== video.HAVE_ENOUGH_DATA){
+            requestAnimationFrame(processVideo);
+            return;
         }
 
-        // Capturar frame
-        ctx.drawImage(video, 0, 0, video.width, video.height);
-        const imageData = ctx.getImageData(0, 0, video.width, video.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         src.data.set(imageData.data);
 
         // Convertir a gris y suavizar
@@ -73,45 +82,43 @@
         cv.GaussianBlur(gray, blurred, new cv.Size(5,5), 0);
 
         // Detectar bordes
-        cv.Canny(blurred, edges, 75, 200);
+        cv.Canny(blurred, edges, 50, 150);
 
         // Encontrar contornos
         cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-        // Limpiar canvas y dibujar video
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(video, 0, 0, video.width, video.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Dibujar contornos rectangulares grandes (posibles tickets)
+        // Dibujar contornos rectangulares grandes
         for (let i = 0; i < contours.size(); ++i) {
-          const cnt = contours.get(i);
-          const peri = cv.arcLength(cnt, true);
-          const approx = new cv.Mat();
-          cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+            const cnt = contours.get(i);
+            const peri = cv.arcLength(cnt, true);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
 
-          if (approx.rows === 4 && cv.contourArea(approx) > 5000) {
-            const points = [];
-            for (let j = 0; j < 4; j++) {
-              points.push({x: approx.intPtr(j,0)[0], y: approx.intPtr(j,0)[1]});
+            if (approx.rows === 4 && cv.contourArea(approx) > 1000) { // Área mínima reducida
+                const points = [];
+                for (let j = 0; j < 4; j++) {
+                    points.push({x: approx.intPtr(j,0)[0], y: approx.intPtr(j,0)[1]});
+                }
+
+                ctx.strokeStyle = 'blue';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, points[0].y);
+                for (let k = 1; k < 4; k++) ctx.lineTo(points[k].x, points[k].y);
+                ctx.closePath();
+                ctx.stroke();
             }
-
-            // Dibujar borde azul
-            ctx.strokeStyle = 'blue';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            for (let k = 1; k < 4; k++) ctx.lineTo(points[k].x, points[k].y);
-            ctx.closePath();
-            ctx.stroke();
-          }
-          approx.delete();
+            approx.delete();
         }
 
         requestAnimationFrame(processVideo);
-      }
-
-      processVideo();
     }
-  </script>
+
+    processVideo();
+}
+</script>
 </body>
 </html>
