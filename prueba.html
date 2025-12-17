@@ -2,18 +2,19 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Detector de Ticket Móvil</title>
+<title>Escaneo de Ticket Móvil</title>
 <style>
   .wrapper {
     position: relative;
     display: inline-block;
   }
-  video, canvas {
+  video, #canvas, #ticketCanvas {
     width: 100%;
     max-width: 480px;
     border: 2px solid #333;
+    margin-top: 10px;
   }
-  canvas {
+  #canvas {
     position: absolute;
     top: 0;
     left: 0;
@@ -21,17 +22,21 @@
 </style>
 </head>
 <body>
-<h2>Detector de Ticket en Tiempo Real (Móvil)</h2>
+<h2>Escaneo de Ticket en Móvil</h2>
 <div class="wrapper">
   <video id="video" autoplay muted playsinline></video>
   <canvas id="canvas"></canvas>
 </div>
+<h3>Ticket detectado:</h3>
+<canvas id="ticketCanvas"></canvas>
 
 <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+const ticketCanvas = document.getElementById('ticketCanvas');
+const ticketCtx = ticketCanvas.getContext('2d');
 
 function onOpenCvReady() {
     console.log('OpenCV.js cargado');
@@ -40,11 +45,7 @@ function onOpenCvReady() {
 
 async function startCamera() {
     const constraints = {
-        video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: { ideal: "environment" }
-        }
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: { ideal: "environment" } }
     };
     try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -62,7 +63,7 @@ async function startCamera() {
 function detectTicket() {
     const src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
     const gray = new cv.Mat();
-    const blurred = new cv.Mat();
+    const filtered = new cv.Mat();
     const edges = new cv.Mat();
     const contours = new cv.MatVector();
     const hierarchy = new cv.Mat();
@@ -77,12 +78,10 @@ function detectTicket() {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         src.data.set(imageData.data);
 
-        // Convertir a gris y suavizar
+        // Gris y mejora de bordes
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        cv.GaussianBlur(gray, blurred, new cv.Size(5,5), 0);
-
-        // Detectar bordes
-        cv.Canny(blurred, edges, 50, 150);
+        cv.bilateralFilter(gray, filtered, 9, 75, 75);
+        cv.Canny(filtered, edges, 50, 150);
 
         // Encontrar contornos
         cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -90,28 +89,61 @@ function detectTicket() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Dibujar contornos rectangulares grandes
+        let maxArea = 0;
+        let bestRect = null;
+
         for (let i = 0; i < contours.size(); ++i) {
             const cnt = contours.get(i);
-            const peri = cv.arcLength(cnt, true);
-            const approx = new cv.Mat();
-            cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+            const area = cv.contourArea(cnt);
+            if (area < 1000) continue;
 
-            if (approx.rows === 4 && cv.contourArea(approx) > 1000) { // Área mínima reducida
-                const points = [];
-                for (let j = 0; j < 4; j++) {
-                    points.push({x: approx.intPtr(j,0)[0], y: approx.intPtr(j,0)[1]});
-                }
-
-                ctx.strokeStyle = 'blue';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(points[0].x, points[0].y);
-                for (let k = 1; k < 4; k++) ctx.lineTo(points[k].x, points[k].y);
-                ctx.closePath();
-                ctx.stroke();
+            const rect = cv.minAreaRect(cnt);
+            if (area > maxArea) {
+                maxArea = area;
+                bestRect = rect;
             }
-            approx.delete();
+
+            // Dibujar todos los contornos
+            const points = cv.RotatedRect.points(rect);
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let j = 1; j < 4; j++) ctx.lineTo(points[j].x, points[j].y);
+            ctx.closePath();
+            ctx.stroke();
+        }
+
+        // Si hay un ticket principal detectado, recortarlo y mostrarlo
+        if (bestRect) {
+            const pts = cv.RotatedRect.points(bestRect);
+            const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                pts[0].x, pts[0].y,
+                pts[1].x, pts[1].y,
+                pts[2].x, pts[2].y,
+                pts[3].x, pts[3].y
+            ]);
+
+            const width = Math.max(bestRect.size.width, bestRect.size.height);
+            const height = Math.min(bestRect.size.width, bestRect.size.height);
+
+            const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0,
+                width, 0,
+                width, height,
+                0, height
+            ]);
+
+            const M = cv.getPerspectiveTransform(srcTri, dstTri);
+            const dst = new cv.Mat();
+            cv.warpPerspective(src, dst, M, new cv.Size(width, height));
+
+            ticketCanvas.width = width;
+            ticketCanvas.height = height;
+            const dstImageData = new ImageData(new Uint8ClampedArray(dst.data), dst.cols, dst.rows);
+            ticketCtx.putImageData(dstImageData, 0, 0);
+
+            srcTri.delete(); dstTri.delete(); M.delete(); dst.delete();
         }
 
         requestAnimationFrame(processVideo);
