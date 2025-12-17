@@ -2,154 +2,170 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Escaneo de Ticket Móvil</title>
+<title>Scanner de Tickets Avanzado</title>
 <style>
-  .wrapper {
-    position: relative;
-    display: inline-block;
-  }
-  video, #canvas, #ticketCanvas {
+  video, canvas {
     width: 100%;
     max-width: 480px;
     border: 2px solid #333;
-    margin-top: 10px;
   }
-  #canvas {
+  canvas {
     position: absolute;
     top: 0;
     left: 0;
   }
+  .wrapper {
+    position: relative;
+  }
 </style>
 </head>
 <body>
-<h2>Escaneo de Ticket en Móvil</h2>
+
+<h2>Scanner de Ticket (tipo Google Drive)</h2>
+
 <div class="wrapper">
   <video id="video" autoplay muted playsinline></video>
-  <canvas id="canvas"></canvas>
+  <canvas id="overlay"></canvas>
 </div>
-<h3>Ticket detectado:</h3>
-<canvas id="ticketCanvas"></canvas>
 
-<script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
+<h3>Ticket capturado:</h3>
+<canvas id="result"></canvas>
+
+<script async src="https://docs.opencv.org/4.x/opencv.js" onload="onReady()"></script>
 <script>
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-const ticketCanvas = document.getElementById('ticketCanvas');
-const ticketCtx = ticketCanvas.getContext('2d');
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const octx = overlay.getContext("2d");
+const resultCanvas = document.getElementById("result");
+const rctx = resultCanvas.getContext("2d");
 
-function onOpenCvReady() {
-    console.log('OpenCV.js cargado');
-    startCamera();
-}
+let stableFrames = 0;
+const REQUIRED_STABLE_FRAMES = 15;
 
-async function startCamera() {
-    const constraints = {
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: { ideal: "environment" } }
+function onReady() {
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: "environment" } }
+  }).then(stream => {
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+      process();
     };
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = stream;
-        video.addEventListener('loadedmetadata', () => {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            detectTicket();
-        });
-    } catch (err) {
-        alert('Error al acceder a la cámara: ' + err);
-    }
+  });
 }
 
-function detectTicket() {
-    const src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-    const gray = new cv.Mat();
-    const filtered = new cv.Mat();
-    const edges = new cv.Mat();
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
+function isSharp(mat) {
+  let lap = new cv.Mat();
+  cv.Laplacian(mat, lap, cv.CV_64F);
+  let mean = cv.mean(lap)[0];
+  lap.delete();
+  return mean > 20; // blur threshold
+}
 
-    function processVideo() {
-        if(video.readyState !== video.HAVE_ENOUGH_DATA){
-            requestAnimationFrame(processVideo);
-            return;
-        }
+function process() {
+  const src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+  const gray = new cv.Mat();
+  const edges = new cv.Mat();
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
 
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        src.data.set(imageData.data);
+  function loop() {
+    octx.drawImage(video, 0, 0);
+    let img = octx.getImageData(0, 0, overlay.width, overlay.height);
+    src.data.set(img.data);
 
-        // Gris y mejora de bordes
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        cv.bilateralFilter(gray, filtered, 9, 75, 75);
-        cv.Canny(filtered, edges, 50, 150);
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(5,5), 0);
+    cv.Canny(gray, edges, 75, 200);
+    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-        // Encontrar contornos
-        cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    let best = null;
+    let bestArea = 0;
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < contours.size(); i++) {
+      let c = contours.get(i);
+      let area = cv.contourArea(c);
+      if (area < 5000) continue;
 
-        let maxArea = 0;
-        let bestRect = null;
+      let rect = cv.minAreaRect(c);
+      let w = rect.size.width;
+      let h = rect.size.height;
+      let ratio = Math.max(w,h) / Math.min(w,h);
 
-        for (let i = 0; i < contours.size(); ++i) {
-            const cnt = contours.get(i);
-            const area = cv.contourArea(cnt);
-            if (area < 1000) continue;
-
-            const rect = cv.minAreaRect(cnt);
-            if (area > maxArea) {
-                maxArea = area;
-                bestRect = rect;
-            }
-
-            // Dibujar todos los contornos
-            const points = cv.RotatedRect.points(rect);
-            ctx.strokeStyle = 'blue';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            for (let j = 1; j < 4; j++) ctx.lineTo(points[j].x, points[j].y);
-            ctx.closePath();
-            ctx.stroke();
-        }
-
-        // Si hay un ticket principal detectado, recortarlo y mostrarlo
-        if (bestRect) {
-            const pts = cv.RotatedRect.points(bestRect);
-            const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                pts[0].x, pts[0].y,
-                pts[1].x, pts[1].y,
-                pts[2].x, pts[2].y,
-                pts[3].x, pts[3].y
-            ]);
-
-            const width = Math.max(bestRect.size.width, bestRect.size.height);
-            const height = Math.min(bestRect.size.width, bestRect.size.height);
-
-            const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                0, 0,
-                width, 0,
-                width, height,
-                0, height
-            ]);
-
-            const M = cv.getPerspectiveTransform(srcTri, dstTri);
-            const dst = new cv.Mat();
-            cv.warpPerspective(src, dst, M, new cv.Size(width, height));
-
-            ticketCanvas.width = width;
-            ticketCanvas.height = height;
-            const dstImageData = new ImageData(new Uint8ClampedArray(dst.data), dst.cols, dst.rows);
-            ticketCtx.putImageData(dstImageData, 0, 0);
-
-            srcTri.delete(); dstTri.delete(); M.delete(); dst.delete();
-        }
-
-        requestAnimationFrame(processVideo);
+      if (ratio < 2) continue; // no es ticket
+      if (area > bestArea) {
+        bestArea = area;
+        best = rect;
+      }
     }
 
-    processVideo();
+    octx.clearRect(0,0,overlay.width,overlay.height);
+    octx.drawImage(video,0,0);
+
+    if (best) {
+      let pts = cv.RotatedRect.points(best);
+
+      // comprobar que no toca bordes
+      let margin = 20;
+      let valid = pts.every(p =>
+        p.x > margin && p.y > margin &&
+        p.x < overlay.width - margin &&
+        p.y < overlay.height - margin
+      );
+
+      let sharp = isSharp(gray);
+
+      if (valid && sharp) stableFrames++;
+      else stableFrames = 0;
+
+      octx.strokeStyle = stableFrames >= REQUIRED_STABLE_FRAMES ? "green" : "blue";
+      octx.lineWidth = 3;
+      octx.beginPath();
+      octx.moveTo(pts[0].x, pts[0].y);
+      for (let i=1;i<4;i++) octx.lineTo(pts[i].x, pts[i].y);
+      octx.closePath();
+      octx.stroke();
+
+      if (stableFrames >= REQUIRED_STABLE_FRAMES) {
+        capture(src, pts);
+        stableFrames = 0;
+      }
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  loop();
+}
+
+function capture(src, pts) {
+  const w = Math.max(
+    Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y),
+    Math.hypot(pts[1].x-pts[2].x, pts[1].y-pts[2].y)
+  );
+  const h = Math.min(
+    Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y),
+    Math.hypot(pts[1].x-pts[2].x, pts[1].y-pts[2].y)
+  );
+
+  const srcTri = cv.matFromArray(4,1,cv.CV_32FC2,[
+    pts[0].x,pts[0].y, pts[1].x,pts[1].y,
+    pts[2].x,pts[2].y, pts[3].x,pts[3].y
+  ]);
+  const dstTri = cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
+
+  let M = cv.getPerspectiveTransform(srcTri,dstTri);
+  let dst = new cv.Mat();
+  cv.warpPerspective(src,dst,M,new cv.Size(w,h));
+
+  resultCanvas.width = w;
+  resultCanvas.height = h;
+  rctx.putImageData(
+    new ImageData(new Uint8ClampedArray(dst.data), dst.cols, dst.rows),0,0
+  );
+
+  srcTri.delete(); dstTri.delete(); M.delete(); dst.delete();
 }
 </script>
 </body>
