@@ -3,145 +3,171 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Scanner Ticket Móvil</title>
+    <title>Pro Ticket Scanner</title>
     <style>
-        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
-        #video-container { position: relative; width: 100vw; height: 100vh; }
+        body { margin: 0; background: #000; font-family: -apple-system, sans-serif; overflow: hidden; }
+        #camera-container { position: relative; width: 100vw; height: 100vh; }
         video { width: 100%; height: 100%; object-fit: cover; }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; }
         
-        /* El "Marquito" de guía */
-        .guide {
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 70%; height: 60%;
-            border: 2px dashed rgba(0, 255, 0, 0.5);
-            border-radius: 15px;
-            z-index: 10;
-            pointer-events: none;
+        /* Capa de escaneo tipo Google Drive */
+        .scan-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(66, 133, 244, 0.1); /* Azul Google */
+            z-index: 2; pointer-events: none;
         }
-        .guide::after {
-            content: "PON EL TICKET DENTRO";
-            position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%);
-            font-size: 12px; letter-spacing: 1px; width: 200px; text-align: center;
+
+        .ui-layer {
+            position: absolute; bottom: 40px; width: 100%; 
+            display: flex; flex-direction: column; align-items: center; z-index: 10;
         }
-        
-        #info { position: fixed; top: 10px; width: 100%; text-align: center; z-index: 20; font-size: 14px; }
-        .status-badge { background: rgba(0,0,0,0.7); padding: 5px 15px; border-radius: 20px; }
+
+        #status {
+            background: rgba(0,0,0,0.8); color: white; padding: 8px 16px;
+            border-radius: 20px; font-size: 13px; margin-bottom: 20px;
+            border: 1px solid #4285f4;
+        }
+
+        .shutter-btn {
+            width: 70px; height: 70px; border-radius: 50%;
+            background: white; border: 5px solid rgba(66, 133, 244, 0.5);
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
     </style>
 </head>
 <body>
 
-    <div id="info"><span class="status-badge" id="msg">Iniciando...</span></div>
-    
-    <div id="video-container">
+    <div id="camera-container">
         <video id="video" playsinline muted></video>
-        <canvas id="canvasOverlay"></canvas>
-        <div class="guide"></div>
+        <canvas id="overlay"></canvas>
+        <div class="scan-overlay"></div>
+        
+        <div class="ui-layer">
+            <div id="status">Buscando documento...</div>
+            <div class="shutter-btn" id="capture"></div>
+        </div>
     </div>
 
     <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="onOpenCvReady()"></script>
 
     <script>
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvasOverlay');
-        const msg = document.getElementById('msg');
-        let src, gray, thresholded, contours, hierarchy;
+        const canvas = document.getElementById('overlay');
+        const status = document.getElementById('status');
+        let src, gray, blurred, thresholded, contours, hierarchy;
 
         function onOpenCvReady() {
-            msg.innerText = "Buscando bordes...";
-            iniciarCamara();
+            status.innerText = "Cámara lista. Enfoca el ticket.";
+            startCamera();
         }
 
-        function iniciarCamara() {
+        function startCamera() {
             navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', focusMode: 'continuous' } 
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
             }).then(stream => {
                 video.srcObject = stream;
                 video.play();
                 video.onloadedmetadata = () => {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
+                    // Inicializar matrices
                     src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
                     gray = new cv.Mat();
+                    blurred = new cv.Mat();
                     thresholded = new cv.Mat();
                     contours = new cv.MatVector();
                     hierarchy = new cv.Mat();
-                    requestAnimationFrame(procesar);
+                    requestAnimationFrame(processFrame);
                 };
             });
         }
 
-        function procesar() {
+        function processFrame() {
             const cap = new cv.VideoCapture(video);
             cap.read(src);
 
-            // 1. Convertir a Gris y suavizar
+            // 1. Pre-procesado agresivo
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+            
+            // 2. Umbral Adaptativo (esto es lo que "ve" a través de las arrugas)
+            cv.adaptiveThreshold(blurred, thresholded, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
 
-            // 2. Umbral Adaptativo (CLAVE: Detecta bordes incluso con sombras)
-            cv.adaptiveThreshold(gray, thresholded, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-
-            // 3. Limpiar el ruido (Cerrar líneas rotas)
-            let M = cv.Mat.ones(3, 3, cv.CV_8U);
-            cv.morphologyEx(thresholded, thresholded, cv.MORPH_CLOSE, M);
-            M.delete();
-
-            // 4. Buscar contornos
+            // 3. Buscar el contorno más grande
             cv.findContours(thresholded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
             let maxArea = 0;
-            let bestPoints = null;
+            let bestContour = null;
 
             for (let i = 0; i < contours.size(); ++i) {
                 let cnt = contours.get(i);
                 let area = cv.contourArea(cnt);
-                
-                // Si el área es al menos el 10% de la pantalla
-                if (area > (src.rows * src.cols * 0.1)) {
-                    let peri = cv.arcLength(cnt, true);
-                    let approx = new cv.Mat();
-                    // Tolerancia más alta (0.05) para aceptar tickets arrugados
-                    cv.approxPolyDP(cnt, approx, 0.05 * peri, true);
-
-                    if (approx.rows === 4 && area > maxArea) {
+                if (area > (src.rows * src.cols * 0.15)) { // Al menos 15% de la pantalla
+                    if (area > maxArea) {
                         maxArea = area;
-                        bestPoints = Array.from(approx.data32S);
+                        bestContour = cnt;
                     }
-                    approx.delete();
                 }
             }
 
-            // DIBUJAR
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            if (bestPoints) {
-                msg.innerText = "✨ ¡TICKET ENCONTRADO! ✨";
-                msg.style.color = "#00ff00";
-                
-                ctx.strokeStyle = "#00ff00";
-                ctx.lineWidth = 8;
-                ctx.lineJoin = "round";
-                ctx.beginPath();
-                ctx.moveTo(bestPoints[0], bestPoints[1]);
-                ctx.lineTo(bestPoints[2], bestPoints[3]);
-                ctx.lineTo(bestPoints[4], bestPoints[5]);
-                ctx.lineTo(bestPoints[6], bestPoints[7]);
-                ctx.closePath();
-                ctx.stroke();
-                
-                // Dibujar puntos en las esquinas
-                ctx.fillStyle = "white";
-                for(let i=0; i<8; i+=2) ctx.beginPath(), ctx.arc(bestPoints[i], bestPoints[i+1], 10, 0, 7), ctx.fill();
+            if (bestContour) {
+                // ALGORITMO DE BÚSQUEDA DE ESQUINAS (Epsilon Search)
+                let peri = cv.arcLength(bestContour, true);
+                let approx = new cv.Mat();
+                let found4 = false;
+
+                // Intentamos simplificar el contorno hasta encontrar 4 puntos
+                // Empezamos con una precisión baja y la subimos
+                for (let e = 0.01; e < 0.1; e += 0.01) {
+                    cv.approxPolyDP(bestContour, approx, e * peri, true);
+                    if (approx.rows === 4) {
+                        found4 = true;
+                        break;
+                    }
+                }
+
+                if (found4) {
+                    drawOverlay(ctx, Array.from(approx.data32S));
+                    status.innerText = "✨ ¡LISTO PARA ESCANEAR!";
+                    status.style.borderColor = "#4285f4";
+                } else {
+                    status.innerText = "Detectando bordes... Mantén quieto el móvil";
+                }
+                approx.delete();
             } else {
-                msg.innerText = "Buscando... Intenta con fondo oscuro";
-                msg.style.color = "white";
+                status.innerText = "Alinea el ticket con el fondo";
             }
 
-            requestAnimationFrame(procesar);
+            requestAnimationFrame(processFrame);
+        }
+
+        function drawOverlay(ctx, pts) {
+            // Dibujar el polígono azul translúcido (Google Style)
+            ctx.fillStyle = "rgba(66, 133, 244, 0.4)";
+            ctx.strokeStyle = "#4285f4";
+            ctx.lineWidth = 5;
+            ctx.lineJoin = "round";
+
+            ctx.beginPath();
+            ctx.moveTo(pts[0], pts[1]);
+            ctx.lineTo(pts[2], pts[3]);
+            ctx.lineTo(pts[4], pts[5]);
+            ctx.lineTo(pts[6], pts[7]);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Dibujar los "tiradores" circulares en las esquinas
+            ctx.fillStyle = "white";
+            for(let i=0; i<8; i+=2) {
+                ctx.beginPath();
+                ctx.arc(pts[i], pts[i+1], 15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
         }
     </script>
 </body>
