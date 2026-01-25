@@ -3,171 +3,113 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pro Ticket Scanner</title>
+    <title>Scanner Debug Pro</title>
     <style>
-        body { margin: 0; background: #000; font-family: -apple-system, sans-serif; overflow: hidden; }
-        #camera-container { position: relative; width: 100vw; height: 100vh; }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; }
-        
-        /* Capa de escaneo tipo Google Drive */
-        .scan-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(66, 133, 244, 0.1); /* Azul Google */
-            z-index: 2; pointer-events: none;
-        }
-
-        .ui-layer {
-            position: absolute; bottom: 40px; width: 100%; 
-            display: flex; flex-direction: column; align-items: center; z-index: 10;
-        }
-
-        #status {
-            background: rgba(0,0,0,0.8); color: white; padding: 8px 16px;
-            border-radius: 20px; font-size: 13px; margin-bottom: 20px;
-            border: 1px solid #4285f4;
-        }
-
-        .shutter-btn {
-            width: 70px; height: 70px; border-radius: 50%;
-            background: white; border: 5px solid rgba(66, 133, 244, 0.5);
-            box-shadow: 0 0 15px rgba(0,0,0,0.5);
-        }
+        body { margin: 0; background: #000; color: #0f0; font-family: monospace; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; }
+        /* El video lo ponemos pequeño arriba para ver el proceso abajo */
+        video { position: absolute; top: 0; left: 0; width: 50%; height: 25%; border: 1px solid #333; z-index: 10; object-fit: cover; }
+        canvas { width: 100%; height: 100%; object-fit: contain; }
+        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; z-index: 20; background: rgba(0,0,0,0.8); padding: 10px; }
     </style>
 </head>
 <body>
 
-    <div id="camera-container">
+    <div id="status">Iniciando sistema de visión...</div>
+    
+    <div id="container">
         <video id="video" playsinline muted></video>
-        <canvas id="overlay"></canvas>
-        <div class="scan-overlay"></div>
-        
-        <div class="ui-layer">
-            <div id="status">Buscando documento...</div>
-            <div class="shutter-btn" id="capture"></div>
-        </div>
+        <canvas id="canvasOut"></canvas>
     </div>
 
-    <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="onOpenCvReady()"></script>
+    <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="init()"></script>
 
     <script>
         const video = document.getElementById('video');
-        const canvas = document.getElementById('overlay');
+        const canvas = document.getElementById('canvasOut');
         const status = document.getElementById('status');
-        let src, gray, blurred, thresholded, contours, hierarchy;
+        let src, gray, result, contours, hierarchy;
 
-        function onOpenCvReady() {
-            status.innerText = "Cámara lista. Enfoca el ticket.";
-            startCamera();
-        }
-
-        function startCamera() {
+        function init() {
             navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+                video: { facingMode: 'environment', width: 640, height: 480 } 
             }).then(stream => {
                 video.srcObject = stream;
                 video.play();
                 video.onloadedmetadata = () => {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
-                    // Inicializar matrices
                     src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
                     gray = new cv.Mat();
-                    blurred = new cv.Mat();
-                    thresholded = new cv.Mat();
+                    result = new cv.Mat();
                     contours = new cv.MatVector();
                     hierarchy = new cv.Mat();
-                    requestAnimationFrame(processFrame);
+                    loop();
                 };
             });
         }
 
-        function processFrame() {
+        function loop() {
             const cap = new cv.VideoCapture(video);
             cap.read(src);
 
-            // 1. Pre-procesado agresivo
+            // 1. Convertir a Gris
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-            
-            // 2. Umbral Adaptativo (esto es lo que "ve" a través de las arrugas)
-            cv.adaptiveThreshold(blurred, thresholded, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
 
-            // 3. Buscar el contorno más grande
-            cv.findContours(thresholded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            // 2. Umbral de "Fuerza Bruta" (Otsu)
+            // Esto separa el ticket del fondo basándose en el histograma global
+            cv.threshold(gray, result, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
 
-            let maxArea = 0;
-            let bestContour = null;
+            // 3. Limpieza de ruido
+            let M = cv.Mat.ones(5, 5, cv.CV_8U);
+            cv.morphologyEx(result, result, cv.MORPH_OPEN, M);
+            M.delete();
+
+            // 4. Buscar contornos
+            cv.findContours(result, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            // Dibujar la imagen procesada para que tú veas qué está pasando
+            // Si el ticket se ve BLANCO y el fondo NEGRO, vamos bien.
+            cv.imshow('canvasOut', result);
+
+            const ctx = canvas.getContext('2d');
+            let found = false;
 
             for (let i = 0; i < contours.size(); ++i) {
                 let cnt = contours.get(i);
                 let area = cv.contourArea(cnt);
-                if (area > (src.rows * src.cols * 0.15)) { // Al menos 15% de la pantalla
-                    if (area > maxArea) {
-                        maxArea = area;
-                        bestContour = cnt;
-                    }
-                }
-            }
 
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // Si detectamos algo que ocupe más del 15% de la pantalla
+                if (area > (src.rows * src.cols * 0.15)) {
+                    // Dibujamos CUALQUIER contorno grande en rojo para debug
+                    ctx.strokeStyle = "red";
+                    ctx.lineWidth = 10;
+                    
+                    let peri = cv.arcLength(cnt, true);
+                    let approx = new cv.Mat();
+                    // Relajamos la precisión al máximo (0.05)
+                    cv.approxPolyDP(cnt, approx, 0.05 * peri, true);
 
-            if (bestContour) {
-                // ALGORITMO DE BÚSQUEDA DE ESQUINAS (Epsilon Search)
-                let peri = cv.arcLength(bestContour, true);
-                let approx = new cv.Mat();
-                let found4 = false;
-
-                // Intentamos simplificar el contorno hasta encontrar 4 puntos
-                // Empezamos con una precisión baja y la subimos
-                for (let e = 0.01; e < 0.1; e += 0.01) {
-                    cv.approxPolyDP(bestContour, approx, e * peri, true);
                     if (approx.rows === 4) {
-                        found4 = true;
-                        break;
+                        // ¡SI ENCUENTRA 4 ESQUINAS LO PINTA EN AZUL!
+                        ctx.strokeStyle = "#0088ff";
+                        ctx.fillStyle = "rgba(0, 136, 255, 0.3)";
+                        ctx.beginPath();
+                        ctx.moveTo(approx.data32S[0], approx.data32S[1]);
+                        ctx.lineTo(approx.data32S[2], approx.data32S[3]);
+                        ctx.lineTo(approx.data32S[4], approx.data32S[5]);
+                        ctx.lineTo(approx.data32S[6], approx.data32S[7]);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.stroke();
+                        found = true;
                     }
+                    approx.delete();
                 }
-
-                if (found4) {
-                    drawOverlay(ctx, Array.from(approx.data32S));
-                    status.innerText = "✨ ¡LISTO PARA ESCANEAR!";
-                    status.style.borderColor = "#4285f4";
-                } else {
-                    status.innerText = "Detectando bordes... Mantén quieto el móvil";
-                }
-                approx.delete();
-            } else {
-                status.innerText = "Alinea el ticket con el fondo";
             }
 
-            requestAnimationFrame(processFrame);
-        }
-
-        function drawOverlay(ctx, pts) {
-            // Dibujar el polígono azul translúcido (Google Style)
-            ctx.fillStyle = "rgba(66, 133, 244, 0.4)";
-            ctx.strokeStyle = "#4285f4";
-            ctx.lineWidth = 5;
-            ctx.lineJoin = "round";
-
-            ctx.beginPath();
-            ctx.moveTo(pts[0], pts[1]);
-            ctx.lineTo(pts[2], pts[3]);
-            ctx.lineTo(pts[4], pts[5]);
-            ctx.lineTo(pts[6], pts[7]);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-
-            // Dibujar los "tiradores" circulares en las esquinas
-            ctx.fillStyle = "white";
-            for(let i=0; i<8; i+=2) {
-                ctx.beginPath();
-                ctx.arc(pts[i], pts[i+1], 15, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.stroke();
-            }
+            status.innerText = found ? "✅ TICKET DETECTADO" : "❌ No detecto 4 esquinas. Mira la pantalla.";
+            requestAnimationFrame(loop);
         }
     </script>
 </body>
