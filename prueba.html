@@ -3,37 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scanner de Tickets Pro - OpenCV.js</title>
+    <title>Scanner Pro - Anti-Arrugas</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a1a; color: white; text-align: center; margin: 0; padding: 20px; }
-        .container { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+        body { font-family: sans-serif; background: #121212; color: white; margin: 0; overflow: hidden; }
+        .wrapper { position: relative; width: 100vw; height: 80vh; background: #000; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
-        .viewer-box { position: relative; width: 100%; max-width: 640px; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); background: #000; }
-        video { width: 100%; display: block; }
-        canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
-        
-        .result-box { margin-top: 20px; }
-        canvas#result { border: 3px solid #4CAF50; border-radius: 8px; max-width: 100%; height: auto; background: #333; }
-        
-        #status { background: #333; padding: 10px 20px; border-radius: 30px; font-size: 14px; color: #00ff00; border: 1px solid #4CAF50; margin-bottom: 20px; display: inline-block; }
-        h2 { margin-bottom: 5px; color: #4CAF50; }
+        /* El Marquito de guía */
+        .guide-box {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70%; height: 60%;
+            border: 2px dashed rgba(255, 255, 255, 0.5);
+            border-radius: 10px;
+            pointer-events: none;
+            z-index: 20;
+        }
+        .guide-box::after {
+            content: "ALINEA EL TICKET AQUÍ";
+            position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
+            font-size: 12px; color: rgba(255,255,255,0.8);
+        }
+
+        #result-container { height: 20vh; background: #1a1a1a; display: flex; align-items: center; justify-content: center; padding: 10px; }
+        canvas#result { height: 90%; border-radius: 5px; border: 2px solid #4CAF50; }
+        .status { position: absolute; top: 10px; width: 100%; text-align: center; z-index: 30; }
+        #status-text { background: rgba(0,0,0,0.6); padding: 5px 15px; border-radius: 20px; font-size: 14px; }
     </style>
 </head>
 <body>
 
-    <h2>Scanner de Tickets Pro</h2>
-    <div id="status">Cargando OpenCV.js...</div>
+    <div class="status"><span id="status-text">Cargando visión artificial...</span></div>
 
-    <div class="container">
-        <div class="viewer-box">
-            <video id="video" playsinline muted></video>
-            <canvas id="overlay"></canvas>
-        </div>
+    <div class="wrapper">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="guide-box"></div>
+    </div>
 
-        <div class="result-box">
-            <h3>Ticket Detectado</h3>
-            <canvas id="result"></canvas>
-        </div>
+    <div id="result-container">
+        <canvas id="result"></canvas>
     </div>
 
     <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady()"></script>
@@ -41,83 +52,59 @@
     <script>
         const video = document.getElementById('video');
         const overlay = document.getElementById('overlay');
+        const statusText = document.getElementById('status-text');
         const resultCanvas = document.getElementById('result');
-        const statusDiv = document.getElementById('status');
-        const octx = overlay.getContext('2d');
 
-        let src, gray, edges, contours, hierarchy;
+        let src, gray, blurred, edges, dialted, contours, hierarchy;
         let streaming = false;
 
         function onOpenCvReady() {
-            statusDiv.innerText = "✅ OpenCV Listo. Accediendo a la cámara...";
-            startCamera();
-        }
-
-        function startCamera() {
+            statusText.innerText = "Cámara lista. Busca un fondo oscuro.";
             navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }, 
-                audio: false 
-            })
-            .then(stream => {
+                video: { facingMode: 'environment', width: 640, height: 480 } 
+            }).then(stream => {
                 video.srcObject = stream;
                 video.play();
                 video.onloadedmetadata = () => {
                     overlay.width = video.videoWidth;
                     overlay.height = video.videoHeight;
                     initCV();
-                    requestAnimationFrame(processVideo);
-                    statusDiv.innerText = "🚀 Escaneando en tiempo real...";
+                    requestAnimationFrame(process);
                 };
-            })
-            .catch(err => {
-                statusDiv.innerText = "❌ Error: " + err.message;
-                statusDiv.style.color = "red";
             });
         }
 
         function initCV() {
             src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
             gray = new cv.Mat();
+            blurred = new cv.Mat();
             edges = new cv.Mat();
+            dialted = new cv.Mat();
             contours = new cv.MatVector();
             hierarchy = new cv.Mat();
             streaming = true;
         }
 
-        // Ordenar puntos: [Top-Left, Top-Right, Bottom-Right, Bottom-Left]
-        function orderPoints(pts) {
-            let points = [];
-            for (let i = 0; i < pts.length; i += 2) {
-                points.push({ x: pts[i], y: pts[i + 1] });
-            }
-
-            // Algoritmo de suma/diferencia para identificar esquinas
-            let sorted = new Array(4);
-            
-            let sums = points.map(p => p.x + p.y);
-            sorted[0] = points[sums.indexOf(Math.min(...sums))]; // TL
-            sorted[2] = points[sums.indexOf(Math.max(...sums))]; // BR
-
-            let diffs = points.map(p => p.y - p.x);
-            sorted[1] = points[diffs.indexOf(Math.min(...diffs))]; // TR
-            sorted[3] = points[diffs.indexOf(Math.max(...diffs))]; // BL
-
-            return sorted;
-        }
-
-        function processVideo() {
+        function process() {
             if (!streaming) return;
-
             const cap = new cv.VideoCapture(video);
             cap.read(src);
 
-            // 1. Pre-procesamiento
+            // 1. PASO CLAVE: Filtro Bilateral (Quita arrugas pero deja bordes)
+            // Es más lento que GaussianBlur pero mucho más preciso para tickets
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-            cv.Canny(gray, edges, 75, 200);
+            cv.bilateralFilter(gray, blurred, 9, 75, 75, cv.BORDER_DEFAULT);
 
-            // 2. Encontrar Contornos
-            cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            // 2. Umbral Adaptativo (Mejor que Canny para luz variable)
+            cv.adaptiveThreshold(blurred, edges, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+
+            // 3. Limpiar ruido: Dilatar y erosionar (Cierra los huecos de las arrugas)
+            let M = cv.Mat.ones(3, 3, cv.CV_8U);
+            cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, M);
+            M.delete();
+
+            // 4. Buscar contornos
+            cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
             let maxArea = 0;
             let bestApprox = null;
@@ -125,76 +112,81 @@
             for (let i = 0; i < contours.size(); ++i) {
                 let cnt = contours.get(i);
                 let area = cv.contourArea(cnt);
-                if (area > 10000) { // Filtrar objetos pequeños
+                
+                // Solo nos interesan áreas medianas/grandes
+                if (area > (src.rows * src.cols * 0.1)) { 
                     let peri = cv.arcLength(cnt, true);
                     let approx = new cv.Mat();
                     cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
                     
-                    if (approx.rows === 4 && area > maxArea) {
-                        maxArea = area;
-                        if (bestApprox) bestApprox.delete();
-                        bestApprox = approx.clone();
+                    // Verificamos que tenga 4 esquinas y sea convexo (forma de ticket)
+                    if (approx.rows === 4 && cv.isContourConvex(approx)) {
+                        if (area > maxArea) {
+                            maxArea = area;
+                            if (bestApprox) bestApprox.delete();
+                            bestApprox = approx.clone();
+                        }
                     }
                     approx.delete();
                 }
             }
 
-            // 3. Dibujar y Transformar
-            octx.clearRect(0, 0, overlay.width, overlay.height);
-            
-            if (bestApprox) {
-                let pts = Array.from(bestApprox.data32S);
-                
-                // Dibujar bordes verdes en el overlay
-                octx.strokeStyle = "#00ff00";
-                octx.lineWidth = 5;
-                octx.beginPath();
-                octx.moveTo(pts[0], pts[1]);
-                octx.lineTo(pts[2], pts[3]);
-                octx.lineTo(pts[4], pts[5]);
-                octx.lineTo(pts[6], pts[7]);
-                octx.closePath();
-                octx.stroke();
+            const ctx = overlay.getContext('2d');
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-                // Realizar recorte de perspectiva
-                try {
-                    warpTicket(src, pts);
-                } catch (e) {
-                    console.log("Error en warp:", e);
-                }
+            if (bestApprox) {
+                const pts = Array.from(bestApprox.data32S);
+                drawPreview(ctx, pts);
+                warpAndShow(src, pts);
+                statusText.innerText = "✅ TICKET DETECTADO";
+                statusText.style.color = "#00ff00";
                 bestApprox.delete();
+            } else {
+                statusText.innerText = "Buscando bordes... Prueba a alejarte un poco";
+                statusText.style.color = "white";
             }
 
-            requestAnimationFrame(processVideo);
+            requestAnimationFrame(process);
         }
 
-        function warpTicket(image, pts) {
-            const ordered = orderPoints(pts);
+        function drawPreview(ctx, pts) {
+            ctx.strokeStyle = "#4CAF50";
+            ctx.lineWidth = 6;
+            ctx.lineJoin = "round";
+            ctx.beginPath();
+            ctx.moveTo(pts[0], pts[1]);
+            ctx.lineTo(pts[2], pts[3]);
+            ctx.lineTo(pts[4], pts[5]);
+            ctx.lineTo(pts[6], pts[7]);
+            ctx.closePath();
+            ctx.stroke();
             
-            // Definimos el tamaño del ticket resultante (proporción estándar)
-            let width = 350;
-            let height = 500;
+            // Dibujar esquinas
+            ctx.fillStyle = "white";
+            for(let i=0; i<8; i+=2) ctx.fillRect(pts[i]-5, pts[i+1]-5, 10, 10);
+        }
 
-            let srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                ordered[0].x, ordered[0].y, 
-                ordered[1].x, ordered[1].y, 
-                ordered[2].x, ordered[2].y, 
-                ordered[3].x, ordered[3].y
-            ]);
+        function warpAndShow(img, pts) {
+            // Reordenar puntos para el warp
+            let coords = [];
+            for (let i = 0; i < 8; i += 2) coords.push({ x: pts[i], y: pts[i + 1] });
+            
+            let sums = coords.map(p => p.x + p.y);
+            let diffs = coords.map(p => p.y - p.x);
+            let tl = coords[sums.indexOf(Math.min(...sums))];
+            let br = coords[sums.indexOf(Math.max(...sums))];
+            let tr = coords[diffs.indexOf(Math.min(...diffs))];
+            let bl = coords[diffs.indexOf(Math.max(...diffs))];
 
-            let dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                0, 0, width, 0, width, height, 0, height
-            ]);
+            let srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
+            let dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, 300, 0, 300, 450, 0, 450]);
 
             let M = cv.getPerspectiveTransform(srcPts, dstPts);
-            let finalDest = new cv.Mat();
-            cv.warpPerspective(image, finalDest, M, new cv.Size(width, height));
+            let result = new cv.Mat();
+            cv.warpPerspective(img, result, M, new cv.Size(300, 450));
+            cv.imshow('result', result);
 
-            // Mostrar resultado final
-            cv.imshow('result', finalDest);
-
-            // Limpiar memoria
-            srcPts.delete(); dstPts.delete(); M.delete(); finalDest.delete();
+            result.delete(); M.delete(); srcPts.delete(); dstPts.delete();
         }
     </script>
 </body>
