@@ -1,158 +1,201 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner de Tickets Pro</title>
-<style>
-  body { font-family: sans-serif; background: #f0f0f0; text-align: center; margin: 0; padding: 10px; }
-  .wrapper {
-    position: relative;
-    width: 100%;
-    max-width: 480px;
-    margin: 0 auto;
-    background: #000;
-  }
-  video {
-    width: 100%;
-    display: block;
-  }
-  canvas#overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 2;
-  }
-  #result {
-    margin-top: 10px;
-    border: 1px solid #ccc;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    max-width: 100%;
-  }
-  .status {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
-    background: rgba(0,0,0,0.7);
-    color: white;
-    padding: 5px 10px;
-    border-radius: 4px;
-    font-size: 14px;
-    z-index: 3;
-  }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner de Tickets Pro - OpenCV.js</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a1a; color: white; text-align: center; margin: 0; padding: 20px; }
+        .container { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+        
+        .viewer-box { position: relative; width: 100%; max-width: 640px; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); background: #000; }
+        video { width: 100%; display: block; }
+        canvas#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+        
+        .result-box { margin-top: 20px; }
+        canvas#result { border: 3px solid #4CAF50; border-radius: 8px; max-width: 100%; height: auto; background: #333; }
+        
+        #status { background: #333; padding: 10px 20px; border-radius: 30px; font-size: 14px; color: #00ff00; border: 1px solid #4CAF50; margin-bottom: 20px; display: inline-block; }
+        h2 { margin-bottom: 5px; color: #4CAF50; }
+    </style>
 </head>
 <body>
 
-<h2>Scanner de Tickets (Optimizado)</h2>
+    <h2>Scanner de Tickets Pro</h2>
+    <div id="status">Cargando OpenCV.js...</div>
 
-<div class="wrapper">
-  <video id="video" playsinline webkit-playsinline muted autoplay></video>
-  <canvas id="overlay"></canvas>
-  <div id="status" class="status">Cargando OpenCV...</div>
-</div>
+    <div class="container">
+        <div class="viewer-box">
+            <video id="video" playsinline muted></video>
+            <canvas id="overlay"></canvas>
+        </div>
 
-<h3>Resultado:</h3>
-<canvas id="result"></canvas>
+        <div class="result-box">
+            <h3>Ticket Detectado</h3>
+            <canvas id="result"></canvas>
+        </div>
+    </div>
 
-<script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady()"></script>
-<script>
-const video = document.getElementById("video");
-const overlay = document.getElementById("overlay");
-const octx = overlay.getContext("2d");
-const resultCanvas = document.getElementById("result");
-const statusDiv = document.getElementById("status");
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady()"></script>
 
-let streaming = false;
-let videoCap = null;
-let src = null, gray = null, edges = null, dst = null;
-let contours = null, hierarchy = null, approx = null;
+    <script>
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const resultCanvas = document.getElementById('result');
+        const statusDiv = document.getElementById('status');
+        const octx = overlay.getContext('2d');
 
-let stableFrames = 0;
-const REQUIRED_STABLE_FRAMES = 10; 
+        let src, gray, edges, contours, hierarchy;
+        let streaming = false;
 
-function onOpenCvReady() {
-  statusDiv.innerText = "OpenCV Listo. Iniciando cámara...";
-  startCamera();
-}
+        function onOpenCvReady() {
+            statusDiv.innerText = "✅ OpenCV Listo. Accediendo a la cámara...";
+            startCamera();
+        }
 
-function startCamera() {
-  navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-    audio: false
-  }).then(stream => {
-    video.srcObject = stream;
-    video.play();
-    video.onloadedmetadata = () => {
-      overlay.width = video.videoWidth;
-      overlay.height = video.videoHeight;
-      streaming = true;
-      initCV();
-      requestAnimationFrame(processVideo);
-    };
-  }).catch(err => {
-    statusDiv.innerText = "Error cámara: " + err;
-  });
-}
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }, 
+                audio: false 
+            })
+            .then(stream => {
+                video.srcObject = stream;
+                video.play();
+                video.onloadedmetadata = () => {
+                    overlay.width = video.videoWidth;
+                    overlay.height = video.videoHeight;
+                    initCV();
+                    requestAnimationFrame(processVideo);
+                    statusDiv.innerText = "🚀 Escaneando en tiempo real...";
+                };
+            })
+            .catch(err => {
+                statusDiv.innerText = "❌ Error: " + err.message;
+                statusDiv.style.color = "red";
+            });
+        }
 
-function initCV() {
-  // Inicializar matrices una sola vez para evitar fugas de memoria
-  src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-  gray = new cv.Mat();
-  edges = new cv.Mat();
-  dst = new cv.Mat();
-  contours = new cv.MatVector();
-  hierarchy = new cv.Mat();
-  approx = new cv.Mat();
-  
-  // Usar VideoCapture es mucho más rápido que drawImage + getImageData
-  videoCap = new cv.VideoCapture(video);
-}
+        function initCV() {
+            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            gray = new cv.Mat();
+            edges = new cv.Mat();
+            contours = new cv.MatVector();
+            hierarchy = new cv.Mat();
+            streaming = true;
+        }
 
-// Función CRÍTICA: Ordenar puntos (TL, TR, BR, BL)
-function orderPoints(pts) {
-  // pts es un array plano [x1, y1, x2, y2, ...]
-  // Lo convertimos a array de objetos para facilitar
-  let points = [
-    { x: pts[0], y: pts[1] },
-    { x: pts[2], y: pts[3] },
-    { x: pts[4], y: pts[5] },
-    { x: pts[6], y: pts[7] }
-  ];
+        // Ordenar puntos: [Top-Left, Top-Right, Bottom-Right, Bottom-Left]
+        function orderPoints(pts) {
+            let points = [];
+            for (let i = 0; i < pts.length; i += 2) {
+                points.push({ x: pts[i], y: pts[i + 1] });
+            }
 
-  // Ordenar por coordenada Y (Top vs Bottom)
-  points.sort((a, b) => a.y - b.y);
+            // Algoritmo de suma/diferencia para identificar esquinas
+            let sorted = new Array(4);
+            
+            let sums = points.map(p => p.x + p.y);
+            sorted[0] = points[sums.indexOf(Math.min(...sums))]; // TL
+            sorted[2] = points[sums.indexOf(Math.max(...sums))]; // BR
 
-  // Los dos primeros son top, los dos últimos bottom
-  let top = points.slice(0, 2);
-  let bottom = points.slice(2, 4);
+            let diffs = points.map(p => p.y - p.x);
+            sorted[1] = points[diffs.indexOf(Math.min(...diffs))]; // TR
+            sorted[3] = points[diffs.indexOf(Math.max(...diffs))]; // BL
 
-  // En top, el de menor X es TL, mayor X es TR
-  top.sort((a, b) => a.x - b.x);
-  let tl = top[0];
-  let tr = top[1];
+            return sorted;
+        }
 
-  // En bottom, el de menor X es BL, mayor X es BR
-  // Nota: Esto asume rectángulo simple. Para perspectiva extrema, se usa suma/resta.
-  // Método robusto Suma/Diferencia:
-  // TL: menor suma (x+y), BR: mayor suma
-  // TR: mayor diferencia (x-y), BL: menor diferencia
-  // Pero para tickets verticales, el sort simple suele bastar. Usemos el robusto abajo en 'capture'.
-  
-  bottom.sort((a, b) => a.x - b.x);
-  let bl = bottom[0];
-  let br = bottom[1];
+        function processVideo() {
+            if (!streaming) return;
 
-  return [tl, tr, br, bl];
-}
+            const cap = new cv.VideoCapture(video);
+            cap.read(src);
 
-function checkBlur(mat) {
-  let lap = new cv.Mat();
-  cv.Laplacian(mat, lap, cv.CV_64F);
-  let meanStdDev = new cv.Mat();
-  let stdDev = new cv.Mat();
-  // La desviación estándar de la Laplaciana es una mejor métrica de nitidez
-  cv.meanStdDev(lap, meanStdDev, stdDev);
-  let score = stdDev.data64F[0] *
+            // 1. Pre-procesamiento
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+            cv.Canny(gray, edges, 75, 200);
+
+            // 2. Encontrar Contornos
+            cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            let maxArea = 0;
+            let bestApprox = null;
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+                if (area > 10000) { // Filtrar objetos pequeños
+                    let peri = cv.arcLength(cnt, true);
+                    let approx = new cv.Mat();
+                    cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+                    
+                    if (approx.rows === 4 && area > maxArea) {
+                        maxArea = area;
+                        if (bestApprox) bestApprox.delete();
+                        bestApprox = approx.clone();
+                    }
+                    approx.delete();
+                }
+            }
+
+            // 3. Dibujar y Transformar
+            octx.clearRect(0, 0, overlay.width, overlay.height);
+            
+            if (bestApprox) {
+                let pts = Array.from(bestApprox.data32S);
+                
+                // Dibujar bordes verdes en el overlay
+                octx.strokeStyle = "#00ff00";
+                octx.lineWidth = 5;
+                octx.beginPath();
+                octx.moveTo(pts[0], pts[1]);
+                octx.lineTo(pts[2], pts[3]);
+                octx.lineTo(pts[4], pts[5]);
+                octx.lineTo(pts[6], pts[7]);
+                octx.closePath();
+                octx.stroke();
+
+                // Realizar recorte de perspectiva
+                try {
+                    warpTicket(src, pts);
+                } catch (e) {
+                    console.log("Error en warp:", e);
+                }
+                bestApprox.delete();
+            }
+
+            requestAnimationFrame(processVideo);
+        }
+
+        function warpTicket(image, pts) {
+            const ordered = orderPoints(pts);
+            
+            // Definimos el tamaño del ticket resultante (proporción estándar)
+            let width = 350;
+            let height = 500;
+
+            let srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                ordered[0].x, ordered[0].y, 
+                ordered[1].x, ordered[1].y, 
+                ordered[2].x, ordered[2].y, 
+                ordered[3].x, ordered[3].y
+            ]);
+
+            let dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0, width, 0, width, height, 0, height
+            ]);
+
+            let M = cv.getPerspectiveTransform(srcPts, dstPts);
+            let finalDest = new cv.Mat();
+            cv.warpPerspective(image, finalDest, M, new cv.Size(width, height));
+
+            // Mostrar resultado final
+            cv.imshow('result', finalDest);
+
+            // Limpiar memoria
+            srcPts.delete(); dstPts.delete(); M.delete(); finalDest.delete();
+        }
+    </script>
+</body>
+</html>
