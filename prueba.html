@@ -2,108 +2,111 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cazador de Esquinas - Diagnóstico</title>
+    <title>Scanner Fuerza Bruta - Debug</title>
     <style>
-        body { background: #222; color: #eee; font-family: sans-serif; text-align: center; margin: 0; }
-        #container { position: relative; margin: 20px auto; max-width: 640px; }
-        video { width: 100%; display: block; border: 2px solid #555; }
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        #status { padding: 10px; font-weight: bold; color: #ff9800; }
+        body { background: #111; color: #0f0; font-family: monospace; text-align: center; margin: 0; }
+        canvas { width: 100%; max-width: 600px; border: 2px solid #333; margin-top: 10px; }
+        .controls { padding: 20px; background: #222; }
+        #log { font-size: 12px; color: #888; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <h2>Diagnóstico: Cazador de Esquinas</h2>
-    <div id="status">Cargando OpenCV...</div>
-
-    <div id="container">
-        <video id="video" playsinline muted autoplay></video>
-        <canvas id="canvasOverlay"></canvas>
+    <div class="controls">
+        <h3>Modo: Contraste Extremo</h3>
+        <div id="status">Cargando OpenCV...</div>
+        <div id="log">Esperando inicialización...</div>
     </div>
-    <p>Debes ver puntos rojos en las esquinas del ticket.</p>
+
+    <canvas id="canvasOut"></canvas>
+    <video id="video" style="display:none"></video>
 
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
 
     <script>
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvasOverlay');
-        const ctx = canvas.getContext('2d');
-        const statusDiv = document.getElementById('status');
+        const canvas = document.getElementById('canvasOut');
+        const status = document.getElementById('status');
+        const log = document.getElementById('log');
 
         let src, gray, corners;
         let streaming = false;
 
         function onOpenCvReady() {
-            statusDiv.innerText = "OpenCV listo. Iniciando cámara...";
-            startCamera();
+            status.innerText = "✅ OpenCV Cargado";
+            iniciarCamara();
         }
 
-        function startCamera() {
-            navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-                audio: false
-            }).then(stream => {
+        function iniciarCamara() {
+            navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment', width: 640, height: 480 } 
+            })
+            .then(stream => {
                 video.srcObject = stream;
+                video.play();
                 video.onloadedmetadata = () => {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
-                    initCV();
+                    initMatrices();
                     streaming = true;
-                    requestAnimationFrame(processVideo);
-                    statusDiv.innerText = "Buscando esquinas fuertes...";
-                    statusDiv.style.color = "#00ff00";
+                    requestAnimationFrame(procesar);
                 };
-            }).catch(err => {
-                statusDiv.innerText = "Error cámara: " + err;
-                statusDiv.style.color = "red";
-            });
+            })
+            .catch(e => status.innerText = "Err: " + e);
         }
 
-        function initCV() {
+        function initMatrices() {
             src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
             gray = new cv.Mat();
             corners = new cv.Mat();
         }
 
-        function processVideo() {
+        function procesar() {
             if (!streaming) return;
 
-            let begin = Date.now();
-            const cap = new cv.VideoCapture(video);
-            cap.read(src);
+            try {
+                let cap = new cv.VideoCapture(video);
+                cap.read(src);
 
-            // 1. Convertir a escala de grises
-            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                // 1. Convertir a Gris
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-            // 2. ALGORITMO SHI-TOMASI (El cazador de esquinas)
-            // Parámetros clave:
-            // - maxCorners: 50 (Buscamos los 50 mejores puntos)
-            // - qualityLevel: 0.01 (Qué tan "puntiagudo" debe ser. Menor = más puntos, más ruido)
-            // - minDistance: 20 (Distancia mínima en píxeles entre dos puntos detectados)
-            cv.goodFeaturesToTrack(gray, corners, 50, 0.01, 20);
+                // 2. FORZAR CONTRASTE (Ecualización)
+                // Esto hace que lo que es casi igual se vuelva muy diferente
+                cv.equalizeHist(gray, gray);
 
-            // 3. Dibujar los resultados en el canvas transparente
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Recorremos los puntos encontrados
-            for (let i = 0; i < corners.rows; i++) {
-                let x = corners.data32F[i * 2];
-                let y = corners.data32F[i * 2 + 1];
-                
-                // Dibujar círculo rojo
-                ctx.beginPath();
-                ctx.arc(x, y, 5, 0, 2 * Math.PI);
-                ctx.fillStyle = 'red';
-                ctx.fill();
-                ctx.strokeStyle = 'yellow';
-                ctx.lineWidth = 2;
-                ctx.stroke();
+                // 3. BUSCAR PUNTOS (Shi-Tomasi) con sensibilidad extrema
+                // 100 puntos, calidad 0.001, distancia 10px
+                cv.goodFeaturesToTrack(gray, corners, 100, 0.001, 10);
+
+                // 4. DIBUJAR TODO EN EL CANVAS DE SALIDA
+                // Primero dibujamos la imagen de la cámara (en gris para ver el contraste)
+                cv.imshow('canvasOut', gray);
+
+                // Dibujamos círculos rojos directamente sobre el canvas con la API de JS
+                const ctx = canvas.getContext('2d');
+                let puntosDetectados = corners.rows;
+                log.innerText = `Puntos detectados: ${puntosDetectados} | Resolución: ${video.videoWidth}x${video.videoHeight}`;
+
+                ctx.fillStyle = "red";
+                for (let i = 0; i < corners.rows; i++) {
+                    let x = corners.data32F[i * 2];
+                    let y = corners.data32F[i * 2 + 1];
+                    
+                    ctx.beginPath();
+                    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                    // Dibujar una cruz amarilla pequeña
+                    ctx.strokeStyle = "yellow";
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+
+            } catch (err) {
+                console.log("Error en el loop:", err);
             }
 
-            // Control de FPS para no quemar el móvil
-            let delay = 1000/30 - (Date.now() - begin);
-            setTimeout(processVideo, delay);
+            requestAnimationFrame(procesar);
         }
     </script>
 </body>
