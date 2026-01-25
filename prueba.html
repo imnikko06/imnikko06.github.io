@@ -2,75 +2,147 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Scanner Debug - Paso a Paso</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scanner Ticket Móvil</title>
     <style>
-        body { background: #1a1a1a; color: #fff; font-family: monospace; padding: 20px; text-align: center; }
-        .box { border: 2px solid #444; padding: 10px; margin: 10px; border-radius: 8px; }
-        #video { width: 320px; background: #000; }
-        .ready { color: #0f0; }
-        .error { color: #f00; }
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
+        #video-container { position: relative; width: 100vw; height: 100vh; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; }
+        
+        /* El "Marquito" de guía */
+        .guide {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70%; height: 60%;
+            border: 2px dashed rgba(0, 255, 0, 0.5);
+            border-radius: 15px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .guide::after {
+            content: "PON EL TICKET DENTRO";
+            position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%);
+            font-size: 12px; letter-spacing: 1px; width: 200px; text-align: center;
+        }
+        
+        #info { position: fixed; top: 10px; width: 100%; text-align: center; z-index: 20; font-size: 14px; }
+        .status-badge { background: rgba(0,0,0,0.7); padding: 5px 15px; border-radius: 20px; }
     </style>
 </head>
 <body>
 
-    <div class="box">
-        1. Cámara: <span id="camStatus">Esperando permiso...</span><br>
+    <div id="info"><span class="status-badge" id="msg">Iniciando...</span></div>
+    
+    <div id="video-container">
         <video id="video" playsinline muted></video>
+        <canvas id="canvasOverlay"></canvas>
+        <div class="guide"></div>
     </div>
 
-    <div class="box">
-        2. OpenCV: <span id="cvStatus">Descargando librería...</span>
-    </div>
-
-    <canvas id="canvasOut"></canvas>
+    <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="onOpenCvReady()"></script>
 
     <script>
-        // Paso 1: Forzar inicio de cámara inmediatamente
         const video = document.getElementById('video');
-        const camStatus = document.getElementById('camStatus');
-        const cvStatus = document.getElementById('cvStatus');
+        const canvas = document.getElementById('canvasOverlay');
+        const msg = document.getElementById('msg');
+        let src, gray, thresholded, contours, hierarchy;
 
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-            .then(stream => {
+        function onOpenCvReady() {
+            msg.innerText = "Buscando bordes...";
+            iniciarCamara();
+        }
+
+        function iniciarCamara() {
+            navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment', focusMode: 'continuous' } 
+            }).then(stream => {
                 video.srcObject = stream;
                 video.play();
-                camStatus.innerText = "✅ FUNCIONANDO";
-                camStatus.className = "ready";
-            })
-            .catch(err => {
-                camStatus.innerText = "❌ ERROR: " + err.name;
-                camStatus.className = "error";
-                console.error(err);
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                    gray = new cv.Mat();
+                    thresholded = new cv.Mat();
+                    contours = new cv.MatVector();
+                    hierarchy = new cv.Mat();
+                    requestAnimationFrame(procesar);
+                };
             });
-
-        // Paso 2: Función que llamará OpenCV cuando cargue
-        function onOpenCvReady() {
-            cvStatus.innerText = "✅ CARGADO CORRECTAMENTE";
-            cvStatus.className = "ready";
-            iniciarProcesamiento();
         }
 
-        function iniciarProcesamiento() {
-            let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-            let gray = new cv.Mat();
-            let cap = new cv.VideoCapture(video);
+        function procesar() {
+            const cap = new cv.VideoCapture(video);
+            cap.read(src);
 
-            function loop() {
-                try {
-                    cap.read(src);
-                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                    // Si llegamos aquí, OpenCV está trabajando
-                    cv.imshow('canvasOut', gray);
-                } catch (e) {
-                    console.log("Esperando frames...");
+            // 1. Convertir a Gris y suavizar
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+
+            // 2. Umbral Adaptativo (CLAVE: Detecta bordes incluso con sombras)
+            cv.adaptiveThreshold(gray, thresholded, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+
+            // 3. Limpiar el ruido (Cerrar líneas rotas)
+            let M = cv.Mat.ones(3, 3, cv.CV_8U);
+            cv.morphologyEx(thresholded, thresholded, cv.MORPH_CLOSE, M);
+            M.delete();
+
+            // 4. Buscar contornos
+            cv.findContours(thresholded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            let maxArea = 0;
+            let bestPoints = null;
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+                
+                // Si el área es al menos el 10% de la pantalla
+                if (area > (src.rows * src.cols * 0.1)) {
+                    let peri = cv.arcLength(cnt, true);
+                    let approx = new cv.Mat();
+                    // Tolerancia más alta (0.05) para aceptar tickets arrugados
+                    cv.approxPolyDP(cnt, approx, 0.05 * peri, true);
+
+                    if (approx.rows === 4 && area > maxArea) {
+                        maxArea = area;
+                        bestPoints = Array.from(approx.data32S);
+                    }
+                    approx.delete();
                 }
-                requestAnimationFrame(loop);
             }
-            loop();
+
+            // DIBUJAR
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (bestPoints) {
+                msg.innerText = "✨ ¡TICKET ENCONTRADO! ✨";
+                msg.style.color = "#00ff00";
+                
+                ctx.strokeStyle = "#00ff00";
+                ctx.lineWidth = 8;
+                ctx.lineJoin = "round";
+                ctx.beginPath();
+                ctx.moveTo(bestPoints[0], bestPoints[1]);
+                ctx.lineTo(bestPoints[2], bestPoints[3]);
+                ctx.lineTo(bestPoints[4], bestPoints[5]);
+                ctx.lineTo(bestPoints[6], bestPoints[7]);
+                ctx.closePath();
+                ctx.stroke();
+                
+                // Dibujar puntos en las esquinas
+                ctx.fillStyle = "white";
+                for(let i=0; i<8; i+=2) ctx.beginPath(), ctx.arc(bestPoints[i], bestPoints[i+1], 10, 0, 7), ctx.fill();
+            } else {
+                msg.innerText = "Buscando... Intenta con fondo oscuro";
+                msg.style.color = "white";
+            }
+
+            requestAnimationFrame(procesar);
         }
     </script>
-    
-    <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="onOpenCvReady()" onerror="cvStatus.innerText='❌ ERROR DE DESCARGA'"></script>
-
 </body>
 </html>
