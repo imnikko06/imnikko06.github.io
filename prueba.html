@@ -2,112 +2,75 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Scanner Fuerza Bruta - Debug</title>
+    <title>Scanner Debug - Paso a Paso</title>
     <style>
-        body { background: #111; color: #0f0; font-family: monospace; text-align: center; margin: 0; }
-        canvas { width: 100%; max-width: 600px; border: 2px solid #333; margin-top: 10px; }
-        .controls { padding: 20px; background: #222; }
-        #log { font-size: 12px; color: #888; margin-top: 10px; }
+        body { background: #1a1a1a; color: #fff; font-family: monospace; padding: 20px; text-align: center; }
+        .box { border: 2px solid #444; padding: 10px; margin: 10px; border-radius: 8px; }
+        #video { width: 320px; background: #000; }
+        .ready { color: #0f0; }
+        .error { color: #f00; }
     </style>
 </head>
 <body>
 
-    <div class="controls">
-        <h3>Modo: Contraste Extremo</h3>
-        <div id="status">Cargando OpenCV...</div>
-        <div id="log">Esperando inicialización...</div>
+    <div class="box">
+        1. Cámara: <span id="camStatus">Esperando permiso...</span><br>
+        <video id="video" playsinline muted></video>
+    </div>
+
+    <div class="box">
+        2. OpenCV: <span id="cvStatus">Descargando librería...</span>
     </div>
 
     <canvas id="canvasOut"></canvas>
-    <video id="video" style="display:none"></video>
-
-    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
 
     <script>
+        // Paso 1: Forzar inicio de cámara inmediatamente
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvasOut');
-        const status = document.getElementById('status');
-        const log = document.getElementById('log');
+        const camStatus = document.getElementById('camStatus');
+        const cvStatus = document.getElementById('cvStatus');
 
-        let src, gray, corners;
-        let streaming = false;
-
-        function onOpenCvReady() {
-            status.innerText = "✅ OpenCV Cargado";
-            iniciarCamara();
-        }
-
-        function iniciarCamara() {
-            navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: 640, height: 480 } 
-            })
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
             .then(stream => {
                 video.srcObject = stream;
                 video.play();
-                video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    initMatrices();
-                    streaming = true;
-                    requestAnimationFrame(procesar);
-                };
+                camStatus.innerText = "✅ FUNCIONANDO";
+                camStatus.className = "ready";
             })
-            .catch(e => status.innerText = "Err: " + e);
+            .catch(err => {
+                camStatus.innerText = "❌ ERROR: " + err.name;
+                camStatus.className = "error";
+                console.error(err);
+            });
+
+        // Paso 2: Función que llamará OpenCV cuando cargue
+        function onOpenCvReady() {
+            cvStatus.innerText = "✅ CARGADO CORRECTAMENTE";
+            cvStatus.className = "ready";
+            iniciarProcesamiento();
         }
 
-        function initMatrices() {
-            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-            gray = new cv.Mat();
-            corners = new cv.Mat();
-        }
+        function iniciarProcesamiento() {
+            let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            let gray = new cv.Mat();
+            let cap = new cv.VideoCapture(video);
 
-        function procesar() {
-            if (!streaming) return;
-
-            try {
-                let cap = new cv.VideoCapture(video);
-                cap.read(src);
-
-                // 1. Convertir a Gris
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-                // 2. FORZAR CONTRASTE (Ecualización)
-                // Esto hace que lo que es casi igual se vuelva muy diferente
-                cv.equalizeHist(gray, gray);
-
-                // 3. BUSCAR PUNTOS (Shi-Tomasi) con sensibilidad extrema
-                // 100 puntos, calidad 0.001, distancia 10px
-                cv.goodFeaturesToTrack(gray, corners, 100, 0.001, 10);
-
-                // 4. DIBUJAR TODO EN EL CANVAS DE SALIDA
-                // Primero dibujamos la imagen de la cámara (en gris para ver el contraste)
-                cv.imshow('canvasOut', gray);
-
-                // Dibujamos círculos rojos directamente sobre el canvas con la API de JS
-                const ctx = canvas.getContext('2d');
-                let puntosDetectados = corners.rows;
-                log.innerText = `Puntos detectados: ${puntosDetectados} | Resolución: ${video.videoWidth}x${video.videoHeight}`;
-
-                ctx.fillStyle = "red";
-                for (let i = 0; i < corners.rows; i++) {
-                    let x = corners.data32F[i * 2];
-                    let y = corners.data32F[i * 2 + 1];
-                    
-                    ctx.beginPath();
-                    ctx.arc(x, y, 4, 0, 2 * Math.PI);
-                    ctx.fill();
-                    // Dibujar una cruz amarilla pequeña
-                    ctx.strokeStyle = "yellow";
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
+            function loop() {
+                try {
+                    cap.read(src);
+                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                    // Si llegamos aquí, OpenCV está trabajando
+                    cv.imshow('canvasOut', gray);
+                } catch (e) {
+                    console.log("Esperando frames...");
                 }
-
-            } catch (err) {
-                console.log("Error en el loop:", err);
+                requestAnimationFrame(loop);
             }
-
-            requestAnimationFrame(procesar);
+            loop();
         }
     </script>
+    
+    <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="onOpenCvReady()" onerror="cvStatus.innerText='❌ ERROR DE DESCARGA'"></script>
+
 </body>
 </html>
