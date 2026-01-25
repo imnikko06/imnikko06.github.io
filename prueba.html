@@ -3,113 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Scanner Debug Pro</title>
+    <title>Scanner Pro Móvil</title>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; }
-        /* El video lo ponemos pequeño arriba para ver el proceso abajo */
-        video { position: absolute; top: 0; left: 0; width: 50%; height: 25%; border: 1px solid #333; z-index: 10; object-fit: cover; }
-        canvas { width: 100%; height: 100%; object-fit: contain; }
-        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; z-index: 20; background: rgba(0,0,0,0.8); padding: 10px; }
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
+        #log { position: fixed; top: 0; width: 100%; background: rgba(0,0,0,0.8); font-size: 10px; z-index: 100; padding: 5px; color: #0f0; }
+        #btnStart { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 20px 40px; background: #0088ff; color: white; border: none; 
+            border-radius: 50px; font-size: 18px; z-index: 110;
+        }
+        .container { position: relative; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+        canvas { width: 100%; height: auto; border: 1px solid #333; }
+        video { display: none; }
     </style>
 </head>
 <body>
 
-    <div id="status">Iniciando sistema de visión...</div>
-    
-    <div id="container">
+    <div id="log">Esperando OpenCV...</div>
+    <button id="btnStart">📷 EMPEZAR ESCANEO</button>
+
+    <div class="container">
         <video id="video" playsinline muted></video>
         <canvas id="canvasOut"></canvas>
     </div>
 
-    <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="init()"></script>
-
     <script>
+        const log = (t) => document.getElementById('log').innerText = t;
+        const btn = document.getElementById('btnStart');
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvasOut');
-        const status = document.getElementById('status');
-        let src, gray, result, contours, hierarchy;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-        function init() {
-            navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: 640, height: 480 } 
-            }).then(stream => {
+        let src, gray, thresholded, contours, hierarchy;
+
+        // Cargar OpenCV de un CDN ultra-rápido
+        const script = document.createElement('script');
+        script.src = "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.3/dist/opencv.js";
+        script.async = true;
+        document.body.appendChild(script);
+
+        script.onload = () => log("✅ OpenCV listo. Pulsa el botón azul.");
+
+        btn.onclick = async () => {
+            btn.style.display = 'none';
+            try {
+                log("Accediendo a cámara...");
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment', width: 480, height: 640 } 
+                });
                 video.srcObject = stream;
-                video.play();
-                video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-                    gray = new cv.Mat();
-                    result = new cv.Mat();
-                    contours = new cv.MatVector();
-                    hierarchy = new cv.Mat();
-                    loop();
-                };
-            });
-        }
+                await video.play();
+                
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                log("Iniciando matrices...");
+                src = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
+                gray = new cv.Mat();
+                thresholded = new cv.Mat();
+                contours = new cv.MatVector();
+                hierarchy = new cv.Mat();
+                
+                log("🚀 Escaneando...");
+                requestAnimationFrame(process);
+            } catch (e) {
+                log("❌ Error: " + e.message);
+            }
+        };
 
-        function loop() {
-            const cap = new cv.VideoCapture(video);
-            cap.read(src);
+        function process() {
+            // Paso 1: JS normal dibuja el video en el canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Paso 2: OpenCV lee del canvas (esto es más estable que leer del video)
+            let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            src.data.set(imgData.data);
 
-            // 1. Convertir a Gris
+            // Paso 3: Procesamiento agresivo
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+            
+            // Umbral para detectar papel blanco sobre fondo oscuro
+            cv.threshold(gray, thresholded, 150, 255, cv.THRESH_BINARY);
 
-            // 2. Umbral de "Fuerza Bruta" (Otsu)
-            // Esto separa el ticket del fondo basándose en el histograma global
-            cv.threshold(gray, result, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+            // Paso 4: Buscar esquinas
+            cv.findContours(thresholded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-            // 3. Limpieza de ruido
-            let M = cv.Mat.ones(5, 5, cv.CV_8U);
-            cv.morphologyEx(result, result, cv.MORPH_OPEN, M);
-            M.delete();
-
-            // 4. Buscar contornos
-            cv.findContours(result, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-            // Dibujar la imagen procesada para que tú veas qué está pasando
-            // Si el ticket se ve BLANCO y el fondo NEGRO, vamos bien.
-            cv.imshow('canvasOut', result);
-
-            const ctx = canvas.getContext('2d');
-            let found = false;
+            let maxArea = 0;
+            let bestApprox = null;
 
             for (let i = 0; i < contours.size(); ++i) {
                 let cnt = contours.get(i);
                 let area = cv.contourArea(cnt);
-
-                // Si detectamos algo que ocupe más del 15% de la pantalla
-                if (area > (src.rows * src.cols * 0.15)) {
-                    // Dibujamos CUALQUIER contorno grande en rojo para debug
-                    ctx.strokeStyle = "red";
-                    ctx.lineWidth = 10;
-                    
+                if (area > 15000) { // Tamaño mínimo de un ticket
                     let peri = cv.arcLength(cnt, true);
                     let approx = new cv.Mat();
-                    // Relajamos la precisión al máximo (0.05)
-                    cv.approxPolyDP(cnt, approx, 0.05 * peri, true);
+                    cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
 
                     if (approx.rows === 4) {
-                        // ¡SI ENCUENTRA 4 ESQUINAS LO PINTA EN AZUL!
-                        ctx.strokeStyle = "#0088ff";
-                        ctx.fillStyle = "rgba(0, 136, 255, 0.3)";
-                        ctx.beginPath();
-                        ctx.moveTo(approx.data32S[0], approx.data32S[1]);
-                        ctx.lineTo(approx.data32S[2], approx.data32S[3]);
-                        ctx.lineTo(approx.data32S[4], approx.data32S[5]);
-                        ctx.lineTo(approx.data32S[6], approx.data32S[7]);
-                        ctx.closePath();
-                        ctx.fill();
-                        ctx.stroke();
-                        found = true;
+                        if (area > maxArea) {
+                            maxArea = area;
+                            if (bestApprox) bestApprox.delete();
+                            bestApprox = approx.clone();
+                        }
                     }
                     approx.delete();
                 }
             }
 
-            status.innerText = found ? "✅ TICKET DETECTADO" : "❌ No detecto 4 esquinas. Mira la pantalla.";
-            requestAnimationFrame(loop);
+            // Paso 5: Dibujar el resultado
+            if (bestApprox) {
+                ctx.strokeStyle = "#00ff00";
+                ctx.lineWidth = 10;
+                ctx.beginPath();
+                ctx.moveTo(bestApprox.data32S[0], bestApprox.data32S[1]);
+                ctx.lineTo(bestApprox.data32S[2], bestApprox.data32S[3]);
+                ctx.lineTo(bestApprox.data32S[4], bestApprox.data32S[5]);
+                ctx.lineTo(bestApprox.data32S[6], bestApprox.data32S[7]);
+                ctx.closePath();
+                ctx.stroke();
+                
+                // Efecto "Relleno" azul
+                ctx.fillStyle = "rgba(0, 150, 255, 0.3)";
+                ctx.fill();
+                bestApprox.delete();
+            }
+
+            requestAnimationFrame(process);
         }
     </script>
 </body>
