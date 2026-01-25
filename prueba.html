@@ -2,101 +2,109 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Debug Scanner - OpenCV</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cazador de Esquinas - Diagnóstico</title>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; text-align: center; }
-        video, canvas { width: 100%; max-width: 500px; display: block; margin: 0 auto; }
-        .debug-view { border: 2px solid red; margin-top: 10px; }
-        #info { position: fixed; top: 0; width: 100%; background: rgba(0,0,0,0.8); padding: 10px; z-index: 100; }
+        body { background: #222; color: #eee; font-family: sans-serif; text-align: center; margin: 0; }
+        #container { position: relative; margin: 20px auto; max-width: 640px; }
+        video { width: 100%; display: block; border: 2px solid #555; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #status { padding: 10px; font-weight: bold; color: #ff9800; }
     </style>
 </head>
 <body>
 
-<div id="info">Estado: <span id="msg">Cargando...</span></div>
-<video id="v" playsinline muted></video>
-<canvas id="debugCanvas" class="debug-view"></canvas>
-<canvas id="res" style="width:200px; border:1px solid white;"></canvas>
+    <h2>Diagnóstico: Cazador de Esquinas</h2>
+    <div id="status">Cargando OpenCV...</div>
 
-<script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="init()"></script>
+    <div id="container">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="canvasOverlay"></canvas>
+    </div>
+    <p>Debes ver puntos rojos en las esquinas del ticket.</p>
 
-<script>
-let src, gray, edge, contours, hier;
-const msg = document.getElementById('msg');
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
 
-function init() {
-    msg.innerText = "OpenCV OK. Iniciando cámara...";
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-    .then(s => {
-        const v = document.getElementById('v');
-        v.srcObject = s;
-        v.play();
-        v.onloadedmetadata = () => {
-            src = new cv.Mat(v.videoHeight, v.videoWidth, cv.CV_8UC4);
-            gray = new cv.Mat();
-            edge = new cv.Mat();
-            contours = new cv.MatVector();
-            hier = new cv.Mat();
-            loop();
-        };
-    });
-}
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvasOverlay');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
 
-function loop() {
-    const v = document.getElementById('v');
-    const cap = new cv.VideoCapture(v);
-    cap.read(src);
+        let src, gray, corners;
+        let streaming = false;
 
-    // 1. Convertir a gris y mejorar contraste
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    
-    // 2. Detección de bordes Canny (más directo para debug)
-    // Bajamos los umbrales para que detecte HASTA LO MÁS MÍNIMO
-    cv.Canny(gray, edge, 50, 150);
-
-    // 3. Engrosar líneas (CRÍTICO para tickets arrugados)
-    let M = cv.Mat.ones(3, 3, cv.CV_8U);
-    cv.dilate(edge, edge, M); 
-    M.delete();
-
-    // MOSTRAMOS EL DEBUG: Si aquí no ves un rectángulo blanco, ajusta la luz
-    cv.imshow('debugCanvas', edge);
-
-    // 4. Buscar contornos
-    cv.findContours(edge, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-    let found = false;
-    for (let i = 0; i < contours.size(); ++i) {
-        let cnt = contours.get(i);
-        let area = cv.contourArea(cnt);
-        
-        // Bajamos el área mínima al 5% de la pantalla
-        if (area > (src.rows * src.cols * 0.05)) {
-            let peri = cv.arcLength(cnt, true);
-            let approx = new cv.Mat();
-            cv.approxPolyDP(cnt, approx, 0.04 * peri, true); // Aumentamos margen de error
-
-            if (approx.rows === 4) {
-                msg.innerText = "¡DETECTADO! Area: " + Math.round(area);
-                msg.style.color = "#0f0";
-                
-                // Dibujar sobre el video original para confirmar
-                let color = new cv.Scalar(0, 255, 0, 255);
-                cv.drawContours(src, contours, i, color, 2, cv.LINE_8, hier, 0);
-                found = true;
-                approx.delete();
-                break; 
-            }
-            approx.delete();
+        function onOpenCvReady() {
+            statusDiv.innerText = "OpenCV listo. Iniciando cámara...";
+            startCamera();
         }
-    }
 
-    if(!found) {
-        msg.innerText = "Buscando... (Mira el cuadro rojo abajo)";
-        msg.style.color = "white";
-    }
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+                audio: false
+            }).then(stream => {
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    initCV();
+                    streaming = true;
+                    requestAnimationFrame(processVideo);
+                    statusDiv.innerText = "Buscando esquinas fuertes...";
+                    statusDiv.style.color = "#00ff00";
+                };
+            }).catch(err => {
+                statusDiv.innerText = "Error cámara: " + err;
+                statusDiv.style.color = "red";
+            });
+        }
 
-    requestAnimationFrame(loop);
-}
-</script>
+        function initCV() {
+            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            gray = new cv.Mat();
+            corners = new cv.Mat();
+        }
+
+        function processVideo() {
+            if (!streaming) return;
+
+            let begin = Date.now();
+            const cap = new cv.VideoCapture(video);
+            cap.read(src);
+
+            // 1. Convertir a escala de grises
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+            // 2. ALGORITMO SHI-TOMASI (El cazador de esquinas)
+            // Parámetros clave:
+            // - maxCorners: 50 (Buscamos los 50 mejores puntos)
+            // - qualityLevel: 0.01 (Qué tan "puntiagudo" debe ser. Menor = más puntos, más ruido)
+            // - minDistance: 20 (Distancia mínima en píxeles entre dos puntos detectados)
+            cv.goodFeaturesToTrack(gray, corners, 50, 0.01, 20);
+
+            // 3. Dibujar los resultados en el canvas transparente
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Recorremos los puntos encontrados
+            for (let i = 0; i < corners.rows; i++) {
+                let x = corners.data32F[i * 2];
+                let y = corners.data32F[i * 2 + 1];
+                
+                // Dibujar círculo rojo
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+                ctx.strokeStyle = 'yellow';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            // Control de FPS para no quemar el móvil
+            let delay = 1000/30 - (Date.now() - begin);
+            setTimeout(processVideo, delay);
+        }
+    </script>
 </body>
 </html>
