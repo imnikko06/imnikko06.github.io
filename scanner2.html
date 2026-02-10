@@ -3,81 +3,113 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Scanner Pro V2</title>
+    <title>Scanner: Detector + Captura</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #log { position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 5px; z-index: 10; font-size: 12px; pointer-events: none; }
-        canvas { width: 100vw; height: 100vh; object-fit: cover; }
-        #btnStart {
-            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-            padding: 15px 30px; background: #2196F3; color: white; border: none;
-            border-radius: 30px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            z-index: 20;
+        
+        /* Visor de Cámara */
+        #container { position: relative; width: 100vw; height: 100vh; }
+        canvas { width: 100%; height: 100%; object-fit: contain; }
+        
+        /* Botones y UI */
+        #ui-layer { position: absolute; bottom: 30px; width: 100%; text-align: center; pointer-events: none; }
+        #btnSnap {
+            pointer-events: auto;
+            background: #ff3b30; color: white; border: 4px solid white;
+            width: 70px; height: 70px; border-radius: 50%;
+            font-size: 0; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            display: inline-block;
         }
+        #btnSnap:active { transform: scale(0.9); background: #cc2f26; }
+        
+        #log { 
+            position: absolute; top: 20px; width: 100%; text-align: center;
+            color: #0f0; text-shadow: 1px 1px 0 #000; font-weight: bold; font-size: 14px;
+        }
+
+        /* Pantalla de Resultado (Oculta al inicio) */
+        #resultScreen {
+            display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #1c1c1e; z-index: 100; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #resultCanvas {
+            max-width: 90%; max-height: 80%; border: 2px solid #fff; margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        #btnBack {
+            padding: 15px 40px; background: #333; color: white; border: 1px solid #555;
+            border-radius: 8px; font-size: 16px; cursor: pointer;
+        }
+
         video { display: none; }
     </style>
 </head>
 <body>
 
-    <div id="log">Cargando motor de visión...</div>
-    <button id="btnStart" disabled>INICIAR CÁMARA</button>
-    <video id="video" playsinline muted></video>
-    <canvas id="canvasOut"></canvas>
+    <div id="container">
+        <div id="log">Iniciando sistema...</div>
+        <video id="video" playsinline muted></video>
+        <canvas id="canvasOut"></canvas>
+        
+        <div id="ui-layer">
+            <button id="btnSnap">CAPTURAR</button>
+        </div>
+    </div>
+
+    <div id="resultScreen">
+        <h2 style="color:white; margin-top:0;">Captura Detectada</h2>
+        <canvas id="resultCanvas"></canvas>
+        <button id="btnBack">🔄 Escanear otro</button>
+    </div>
 
     <script src="https://docs.opencv.org/4.8.0/opencv.js" async onload="onOpenCvReady();"></script>
 
     <script>
         const log = (t) => document.getElementById('log').innerText = t;
-        const btn = document.getElementById('btnStart');
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvasOut');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        
+        // Elementos de Resultado
+        const resScreen = document.getElementById('resultScreen');
+        const resCanvas = document.getElementById('resultCanvas');
+        const btnSnap = document.getElementById('btnSnap');
+        const btnBack = document.getElementById('btnBack');
 
-        let src, dst, gray, edges, contours, hierarchy, approx;
+        let src, gray, binary, contours, hierarchy, hull;
         let isStreaming = false;
+        let currentRect = null; // Aquí guardaremos las coordenadas del ticket detectado
 
         function onOpenCvReady() {
-            log("✅ Sistema listo.");
-            btn.removeAttribute('disabled');
-            btn.onclick = startCamera;
+            log("Cámara iniciándose...");
+            startCamera();
         }
 
         async function startCamera() {
             try {
-                // Pedir cámara con preferencia de resolución HD para mejor OCR
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: 'environment',
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
-                    audio: false
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
                 });
-
                 video.srcObject = stream;
                 await video.play();
 
-                // Ajustar canvas al tamaño real del video
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
 
                 initOpenCV();
-                btn.style.display = 'none';
-                log("📷 Buscando documento...");
                 requestAnimationFrame(processVideo);
             } catch (err) {
-                log("❌ Error: " + err.message);
+                log("Error: " + err.message);
             }
         }
 
         function initOpenCV() {
             src = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
-            dst = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
             gray = new cv.Mat();
-            edges = new cv.Mat(); // Matriz para detección de bordes
+            binary = new cv.Mat();
             contours = new cv.MatVector();
             hierarchy = new cv.Mat();
-            approx = new cv.Mat();
+            hull = new cv.MatVector();
             isStreaming = true;
         }
 
@@ -85,76 +117,120 @@
             if (!isStreaming) return;
 
             try {
-                // 1. Dibujar video en canvas y pasar a Matriz OpenCV
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 src.data.set(imgData.data);
 
-                // 2. Pre-procesamiento (MEJORADO)
+                // --- PROCESAMIENTO ROBUSTO (Anti-Arrugas) ---
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
                 
-                // CAMBIO CLAVE: Usar Canny en lugar de Threshold simple
-                // Esto detecta bordes por gradiente, no por color absoluto.
-                // Es mucho más resistente a sombras.
-                cv.Canny(gray, edges, 75, 200);
+                // Blur fuerte para eliminar letras
+                cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 0);
+                
+                // Threshold adaptativo (Mejor para sombras/arrugas)
+                cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
 
-                // 3. Encontrar contornos
-                // Usamos RETR_LIST para encontrar todos, luego filtramos
-                cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                // Dilatar para unir trozos rotos por arrugas
+                let M = cv.Mat.ones(5, 5, cv.CV_8U);
+                cv.dilate(binary, binary, M, new cv.Point(-1, -1), 2);
+                M.delete();
+
+                // Buscar contornos
+                cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
                 let maxArea = 0;
-                let bestContour = null;
+                let maxIndex = -1;
 
+                // Encontrar el objeto más grande
                 for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
-
-                    // Filtro de área mínima (ajustable según resolución)
-                    if (area > 5000) { 
-                        let peri = cv.arcLength(cnt, true);
-                        // Aproximar polígono
-                        cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
-
-                        // Buscamos cuadriláteros (4 puntos)
-                        if (approx.rows === 4) {
-                            if (area > maxArea) {
-                                maxArea = area;
-                                // Guardamos una copia de los puntos, no el objeto Mat
-                                bestContour = approx.clone(); 
-                            }
+                    let area = cv.contourArea(contours.get(i));
+                    if (area > 30000) { // Filtro de tamaño mínimo
+                        if (area > maxArea) {
+                            maxArea = area;
+                            maxIndex = i;
                         }
                     }
                 }
 
-                // 4. Dibujar resultado
-                if (bestContour) {
-                    // Dibujar contorno encontrado en verde
-                    // Hay que envolverlo en un Vector para drawContours
-                    let tmpContourVector = new cv.MatVector();
-                    tmpContourVector.push_back(bestContour);
+                currentRect = null; // Reset
+
+                if (maxIndex !== -1) {
+                    let cnt = contours.get(maxIndex);
                     
-                    // Dibujamos sobre la imagen original (src)
-                    cv.drawContours(src, tmpContourVector, 0, [0, 255, 0, 255], 3);
+                    // 1. Obtener Envoltorio Convexo (Ignora arrugas hacia adentro)
+                    let tmpHull = new cv.Mat();
+                    cv.convexHull(cnt, tmpHull, false, true);
                     
-                    // Limpieza inmediata
-                    bestContour.delete(); 
-                    tmpContourVector.delete();
-                    log("✅ Documento detectado");
+                    // 2. Obtener Rectángulo delimitador (Bounding Box)
+                    // Esto nos da x, y, ancho y alto para recortar después
+                    let rect = cv.boundingRect(tmpHull);
+                    currentRect = rect; // Guardamos para usarlo al capturar
+
+                    // Visualización:
+                    // Dibujamos el contorno exacto en VERDE
+                    let hullVec = new cv.MatVector();
+                    hullVec.push_back(tmpHull);
+                    cv.drawContours(src, hullVec, 0, [0, 255, 0, 255], 2);
+                    
+                    // Dibujamos el rectángulo de corte en ROJO (lo que se capturará)
+                    let pt1 = new cv.Point(rect.x, rect.y);
+                    let pt2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
+                    cv.rectangle(src, pt1, pt2, [255, 0, 0, 255], 3);
+
+                    log("✅ Ticket detectado - Pulsa CAPTURAR");
+                    
+                    hullVec.delete(); 
+                    tmpHull.delete();
                 } else {
-                    log("🔍 Buscando bordes...");
+                    log("🔍 Buscando ticket...");
                 }
 
-                // 5. Mostrar resultado final en el canvas
                 cv.imshow('canvasOut', src);
 
-            } catch (err) {
-                console.error(err);
+            } catch (e) {
+                console.error(e);
             }
-
-            // Loop
             requestAnimationFrame(processVideo);
         }
+
+        // --- LÓGICA DE CAPTURA Y RECORTE ---
+        btnSnap.onclick = () => {
+            if (!currentRect) {
+                alert("No se ha detectado ningún ticket. Intenta acercarte o mejorar la luz.");
+                return;
+            }
+
+            isStreaming = false; // Pausar video
+
+            // 1. Añadir margen de seguridad (Padding)
+            // Para no cortar el ticket justo al borde si la detección falló por 1mm
+            let padding = 20; 
+            let x = Math.max(currentRect.x - padding, 0);
+            let y = Math.max(currentRect.y - padding, 0);
+            let w = Math.min(currentRect.width + (padding*2), src.cols - x);
+            let h = Math.min(currentRect.height + (padding*2), src.rows - y);
+            
+            let rectWithPadding = new cv.Rect(x, y, w, h);
+
+            // 2. Recortar (ROI - Region of Interest)
+            let cropped = src.roi(rectWithPadding);
+
+            // 3. Mostrar en el canvas de resultado
+            cv.imshow('resultCanvas', cropped);
+            
+            // Limpieza
+            cropped.delete();
+
+            // 4. Cambiar UI
+            resScreen.style.display = 'flex';
+        };
+
+        btnBack.onclick = () => {
+            resScreen.style.display = 'none';
+            isStreaming = true;
+            requestAnimationFrame(processVideo);
+        };
+
     </script>
 </body>
 </html>
