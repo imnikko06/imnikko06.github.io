@@ -3,129 +3,141 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Scanner Pro con Editor</title>
+    <title>Scanner Pro Final</title>
+    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css">
+    
     <style>
+        /* --- ESTILOS GENERALES --- */
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; touch-action: none; }
         
-        /* --- VISTA DE CÁMARA --- */
-        #camContainer { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; background: black; }
-        /* Usamos object-fit: cover para que la cámara ocupe toda la pantalla sin bordes negros */
-        #canvasOut { position: absolute; top:0; left:0; width: 100%; height: 100%; object-fit: cover; }
+        /* --- PANTALLA CÁMARA --- */
+        #camContainer { position: relative; width: 100vw; height: 100vh; background: black; }
+        #canvasOut { width: 100%; height: 100%; object-fit: cover; }
         
-        #ui-layer { position: absolute; bottom: 40px; width: 100%; text-align: center; z-index: 10; pointer-events: none; }
+        #ui-layer { 
+            position: absolute; bottom: 30px; left: 0; width: 100%; 
+            display: flex; justify-content: center; pointer-events: none; 
+        }
         #btnSnap {
             pointer-events: auto;
-            background: #ffcc00; color: black; border: 4px solid white;
-            width: 80px; height: 80px; border-radius: 50%;
-            font-weight: bold; font-size: 14px; box-shadow: 0 0 20px rgba(255, 204, 0, 0.5);
+            background: #ffcc00; width: 70px; height: 70px; border-radius: 50%;
+            border: 4px solid #fff; box-shadow: 0 0 15px rgba(255,204,0,0.6);
             cursor: pointer;
         }
-        #btnSnap:active { transform: scale(0.95); }
-        
+
         #log { 
-            position: absolute; top: 50px; width: 100%; text-align: center;
-            color: #ffcc00; text-shadow: 1px 1px 2px #000; font-weight: bold; font-size: 16px; z-index: 10;
-            pointer-events: none;
+            position: absolute; top: 40px; width: 100%; text-align: center;
+            color: #ffcc00; text-shadow: 1px 1px 2px #000; font-weight: bold; 
+            font-size: 14px; pointer-events: none; z-index: 10;
         }
 
-        /* --- VISTA DE EDITOR --- */
+        /* --- PANTALLA EDITOR (IMPORTANTE) --- */
         #editorScreen {
             display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: #222; z-index: 100; flex-direction: column;
+            background: #111; z-index: 100; flex-direction: column;
         }
-        /* Contenedor para la imagen a editar, limitamos altura para dejar sitio a botones */
-        .editor-canvas-container {
-            flex: 1; width: 100%; overflow: hidden; background: #333; position: relative;
+
+        /* El contenedor de la imagen debe ocupar todo el espacio menos la barra de herramientas */
+        .crop-container {
+            flex: 1; /* Ocupa todo el espacio vertical disponible */
+            width: 100%;
+            background: #000;
+            position: relative;
+            overflow: hidden;
         }
-        /* La imagen real dentro del editor */
-        #editorImage { max-width: 100%; }
+        
+        /* La imagen dentro del editor (max-width vital para CropperJS) */
+        #imageToCrop {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+        }
 
         /* Barra de herramientas inferior */
         .toolbar {
-            height: 70px; background: #111; display: flex; justify-content: space-around; align-items: center; padding: 0 10px;
+            height: 60px; background: #222; display: flex; 
+            justify-content: space-between; align-items: center; padding: 10px 20px;
         }
         .toolbar button {
-            padding: 10px 20px; border: none; border-radius: 8px; font-size: 18px; color: white; cursor: pointer;
+            background: #444; color: white; border: none; padding: 10px 15px;
+            border-radius: 5px; font-size: 16px; margin: 0 5px;
         }
-        .btn-rotate { background: #444; }
-        .btn-save { background: #2196F3; font-weight: bold; padding: 10px 30px; }
-        .btn-cancel { background: #d32f2f; }
+        .btn-save { background: #2ecc71 !important; font-weight: bold; }
+        .btn-cancel { background: #e74c3c !important; }
 
-        video { display: none; }
+        /* --- PANTALLA RESULTADO FINAL --- */
+        #finalResultScreen {
+            display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #000; z-index: 200; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #finalImage {
+            max-width: 90%; max-height: 80%; border: 2px solid #fff; margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
 
     <div id="camContainer">
         <div id="log">Iniciando sistema...</div>
-        <video id="video" playsinline muted></video>
+        <video id="video" playsinline muted style="display:none"></video>
         <canvas id="canvasOut"></canvas>
         <div id="ui-layer">
-            <button id="btnSnap">CAPTURA</button>
+            <button id="btnSnap"></button>
         </div>
     </div>
 
     <div id="editorScreen">
-        <div class="editor-canvas-container">
-             <img id="editorImage" src="">
-        </div>
+        <div class="crop-container" id="cropContainer">
+            </div>
         <div class="toolbar">
             <button class="btn-cancel" id="btnDiscard">❌</button>
-            <button class="btn-rotate" id="btnRotL">🔄 Izq</button>
-            <button class="btn-rotate" id="btnRotR">🔄 Der</button>
+            <button id="btnRotL">🔄 -90°</button>
+            <button id="btnRotR">🔄 +90°</button>
             <button class="btn-save" id="btnSave">✅ Guardar</button>
         </div>
+    </div>
+
+    <div id="finalResultScreen">
+        <h2 style="color:white">Resultado</h2>
+        <img id="finalImage" />
+        <br>
+        <button class="btn-cancel" onclick="resetApp()" style="padding: 15px 30px; font-size: 18px; border-radius: 8px; border:none; color:white;">🔄 Nuevo Escaneo</button>
     </div>
 
     <script src="https://docs.opencv.org/4.8.0/opencv.js" async onload="onOpenCvReady();"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
 
     <script>
-        // Referencias UI
+        // Variables
         const log = (t) => document.getElementById('log').innerText = t;
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvasOut');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        const camContainer = document.getElementById('camContainer');
-        const btnSnap = document.getElementById('btnSnap');
-
-        // Referencias Editor
-        const editorScreen = document.getElementById('editorScreen');
-        const editorImage = document.getElementById('editorImage');
-        const btnRotL = document.getElementById('btnRotL');
-        const btnRotR = document.getElementById('btnRotR');
-        const btnSave = document.getElementById('btnSave');
-        const btnDiscard = document.getElementById('btnDiscard');
-
-        // Variables Globales
+        
         let src, gray, binary, contours, hierarchy, detectedRotatedRect;
         let isStreaming = false;
         let cropper = null; // Instancia del editor
 
         function onOpenCvReady() {
-            log("📷 Iniciando cámara...");
+            log("📷 Cámara lista.");
             startCamera();
         }
 
         async function startCamera() {
             try {
-                // Preferencia por resolución HD para mejor detalle
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
                 });
                 video.srcObject = stream;
                 await video.play();
-
-                // Ajustar canvas al tamaño real del video
+                
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
-                
                 initOpenCV();
                 requestAnimationFrame(processVideo);
             } catch (err) {
-                log("Error: " + err.message);
-                alert("Error al acceder a la cámara. Asegúrate de dar permisos.");
+                log("Error Cámara: " + err.message);
             }
         }
 
@@ -138,136 +150,127 @@
             isStreaming = true;
         }
 
-        // --- BUCLE PRINCIPAL DE DETECCIÓN ---
         function processVideo() {
             if (!isStreaming) return;
-
             try {
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 src.data.set(imgData.data);
 
-                // 1. Pre-procesamiento (Modo Bloque Sólido)
+                // Detección de Bloque Sólido (Igual que antes)
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 0); // Blur medio
-                // Threshold OTSU + Binario Invertido suele funcionar mejor para papel blanco
+                cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 0);
                 cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
-
-                // Dilatación agresiva para unir ticket arrugado
-                let M = cv.Mat.ones(7, 7, cv.CV_8U);
+                
+                let M = cv.Mat.ones(5, 5, cv.CV_8U);
                 cv.dilate(binary, binary, M, new cv.Point(-1, -1), 2);
                 M.delete();
 
-                // 2. Buscar Contornos
                 cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
                 let maxArea = 0;
                 let bestCnt = null;
-
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
-                    // Filtro de tamaño (ajustar si es necesario según resolución)
                     if (area > 30000) { 
-                        if (area > maxArea) {
-                            maxArea = area;
-                            bestCnt = cnt;
-                        }
+                        if (area > maxArea) { maxArea = area; bestCnt = cnt; }
                     }
                 }
 
                 detectedRotatedRect = null;
-
                 if (bestCnt) {
-                    // Usamos minAreaRect para envolver el bloque
-                    let rotatedRect = cv.minAreaRect(bestCnt);
-                    detectedRotatedRect = rotatedRect;
-
-                    // Dibujar feedback visual
-                    drawRotatedRect(ctx, rotatedRect);
-                    log("✅ TICKET DETECTADO");
+                    detectedRotatedRect = cv.minAreaRect(bestCnt);
+                    drawRotatedRect(ctx, detectedRotatedRect);
+                    log("✅ Ticket detectado");
                 } else {
-                    log("🔍 Necesito contraste (Fondo oscuro)");
+                    log("🔍 Buscando ticket...");
                 }
-
             } catch (e) { console.error(e); }
             requestAnimationFrame(processVideo);
         }
 
-        // Función auxiliar para dibujar el rectángulo rotado en el canvas JS
         function drawRotatedRect(ctx, rect) {
             let vertices = cv.RotatedRect.points(rect);
             ctx.beginPath();
-            ctx.lineWidth = 5;
-            ctx.strokeStyle = "#FFCC00"; // Amarillo
+            ctx.lineWidth = 6;
+            ctx.strokeStyle = "#FFCC00";
             ctx.moveTo(vertices[0].x, vertices[0].y);
-            for (let i = 1; i < 4; i++) {
-                ctx.lineTo(vertices[i].x, vertices[i].y);
-            }
+            for (let i = 1; i < 4; i++) ctx.lineTo(vertices[i].x, vertices[i].y);
             ctx.closePath();
             ctx.stroke();
-            // Relleno sutil
-            ctx.fillStyle = "rgba(255, 204, 0, 0.15)";
-            ctx.fill();
         }
 
-        // --- LÓGICA DE CAPTURA Y PASE AL EDITOR ---
-        btnSnap.onclick = () => {
+        // --- CAPTURA Y LANZAMIENTO DEL EDITOR ---
+        document.getElementById('btnSnap').onclick = () => {
             if (!detectedRotatedRect) {
-                alert("No se ha detectado ningún ticket.");
+                alert("Acércate más o busca un fondo oscuro.");
                 return;
             }
-            isStreaming = false; // Pausar cámara
+            isStreaming = false;
 
-            // 1. Realizar el recorte y enderezado automático inicial con OpenCV
-            // (Esto es igual que el código anterior)
+            // 1. Enderezar automáticamente con OpenCV antes de editar
             let center = detectedRotatedRect.center;
             let size = detectedRotatedRect.size;
             let angle = detectedRotatedRect.angle;
-            if (angle < -45) { angle += 90; let temp = size.width; size.width = size.height; size.height = temp; }
+            
+            // Corregir ángulo de OpenCV (-90 a 0)
+            if (angle < -45) {
+                angle += 90;
+                let temp = size.width; size.width = size.height; size.height = temp;
+            }
 
             let rotMat = cv.getRotationMatrix2D(center, angle, 1);
             let warped = new cv.Mat();
             
-            // Captura limpia desde el video
+            // Imagen limpia (re-leer del video)
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             let cleanData = ctx.getImageData(0,0,canvas.width, canvas.height);
             let cleanSrc = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
             cleanSrc.data.set(cleanData.data);
 
-            // Rotar y recortar
-            cv.warpAffine(cleanSrc, warped, rotMat, new cv.Size(canvas.width, canvas.height), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0,0,0,255));
+            // Warp & Crop
+            cv.warpAffine(cleanSrc, warped, rotMat, new cv.Size(canvas.width, canvas.height));
             let finalCrop = new cv.Mat();
             cv.getRectSubPix(warped, size, center, finalCrop);
 
-            // 2. Convertir el resultado de OpenCV a una imagen para el editor
-            // Usamos un canvas temporal invisible para esto
+            // Convertir a DataURL
             let tempCanvas = document.createElement('canvas');
             cv.imshow(tempCanvas, finalCrop);
             let dataUrl = tempCanvas.toDataURL('image/jpeg');
 
-            // 3. Cargar el editor
-            openEditor(dataUrl);
-
-            // Limpieza de memoria OpenCV
+            // Limpieza memoria OpenCV
             rotMat.delete(); warped.delete(); finalCrop.delete(); cleanSrc.delete();
+
+            // 2. ABRIR EDITOR
+            startCropper(dataUrl);
         };
 
-        // --- FUNCIONES DEL EDITOR ---
-        function openEditor(imageUrl) {
-            camContainer.style.display = 'none'; // Ocultar cámara
-            editorScreen.style.display = 'flex'; // Mostrar editor
-            editorImage.src = imageUrl;
+        // --- FUNCIÓN ROBUSTA PARA INICIAR CROPPER ---
+        function startCropper(url) {
+            // Ocultar cámara, mostrar editor
+            document.getElementById('camContainer').style.display = 'none';
+            document.getElementById('editorScreen').style.display = 'flex';
+
+            const cropContainer = document.getElementById('cropContainer');
+            
+            // ⚠️ TRUCO CLAVE: Borrar contenido anterior y crear imagen nueva
+            cropContainer.innerHTML = ''; 
+            const img = document.createElement('img');
+            img.id = 'imageToCrop';
+            img.src = url;
+            cropContainer.appendChild(img);
 
             // Destruir instancia previa si existe
-            if (cropper) cropper.destroy();
+            if (cropper) { cropper.destroy(); cropper = null; }
 
-            // Esperar a que la imagen cargue para iniciar Cropper
-            editorImage.onload = () => {
-                 cropper = new Cropper(editorImage, {
-                    viewMode: 1, // Restringir el cuadro de recorte dentro del canvas
-                    dragMode: 'move', // Permitir mover la imagen
-                    autoCropArea: 0.95, // Empezar seleccionando casi todo
+            // Iniciar Cropper solo cuando la imagen haya cargado
+            // (Aunque con DataURL es casi inmediato, esto evita bugs)
+            img.onload = () => {
+                cropper = new Cropper(img, {
+                    viewMode: 1, // Restringe el recorte al tamaño del canvas
+                    dragMode: 'move', // Permite mover la foto
+                    autoCropArea: 0.9,
                     restore: false,
                     guides: true,
                     center: true,
@@ -275,52 +278,37 @@
                     cropBoxMovable: true,
                     cropBoxResizable: true,
                     toggleDragModeOnDblclick: false,
+                    background: false // Quita el fondo de ajedrez
                 });
             };
         }
 
-        // Botones de rotación
-        btnRotL.onclick = () => cropper.rotate(-90);
-        btnRotR.onclick = () => cropper.rotate(90);
+        // --- BOTONES DEL EDITOR ---
+        document.getElementById('btnRotL').onclick = () => { if(cropper) cropper.rotate(-90); };
+        document.getElementById('btnRotR').onclick = () => { if(cropper) cropper.rotate(90); };
+        document.getElementById('btnDiscard').onclick = resetApp;
 
-        // Botón Guardar (Terminar edición)
-        btnSave.onclick = () => {
-            // Obtener el resultado final del editor en alta resolución
-            let finalCanvas = cropper.getCroppedCanvas({
-                maxWidth: 2048,
-                maxHeight: 2048,
-                imageSmoothingEnabled: true,
-                imageSmoothingQuality: 'high',
+        document.getElementById('btnSave').onclick = () => {
+            if (!cropper) return;
+
+            // Obtener recorte final
+            let canvasResult = cropper.getCroppedCanvas({
+                maxWidth: 2048, maxHeight: 2048,
+                imageSmoothingEnabled: true, imageSmoothingQuality: 'high'
             });
 
-            // Por ahora, simplemente reemplazamos la imagen del editor con el resultado final limpio
-            // Aquí podrías enviarlo a un servidor o permitir descarga.
-            cropper.destroy(); // Quitamos la interfaz de edición
-            editorImage.src = finalCanvas.toDataURL('image/jpeg', 0.9); // Mostramos el resultado jpg
-            
-            // Ocultamos botones de edición, dejamos solo el de salir
-            document.querySelector('.toolbar').style.display = 'none';
-            // Creamos un botón de "Nuevo Escaneo" temporalmente
-            let newScanBtn = document.createElement('button');
-            newScanBtn.innerText = "🔄 Nuevo Escaneo";
-            newScanBtn.style.cssText = "position:absolute; bottom:20px; left:50%; transform:translateX(-50%); padding:15px 30px; background:#2196F3; color:white; border:none; border-radius:30px; font-size:18px;";
-            editorScreen.appendChild(newScanBtn);
-            
-            newScanBtn.onclick = () => {
-                newScanBtn.remove();
-                closeEditor();
-            };
+            // Mostrar pantalla final
+            document.getElementById('editorScreen').style.display = 'none';
+            document.getElementById('finalResultScreen').style.display = 'flex';
+            document.getElementById('finalImage').src = canvasResult.toDataURL('image/jpeg', 0.95);
         };
 
-        // Botón Descartar (Volver a cámara)
-        btnDiscard.onclick = closeEditor;
-
-        function closeEditor() {
-            if (cropper) cropper.destroy();
-            editorScreen.style.display = 'none';
-            camContainer.style.display = 'flex';
-            document.querySelector('.toolbar').style.display = 'flex'; // Restaurar toolbar
-            editorImage.src = "";
+        function resetApp() {
+            // Limpiar todo y volver a cámara
+            if (cropper) { cropper.destroy(); cropper = null; }
+            document.getElementById('editorScreen').style.display = 'none';
+            document.getElementById('finalResultScreen').style.display = 'none';
+            document.getElementById('camContainer').style.display = 'block'; // Volver a mostrar contenedor flex/block
             isStreaming = true;
             requestAnimationFrame(processVideo);
         }
