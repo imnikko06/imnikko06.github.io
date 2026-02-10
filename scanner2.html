@@ -219,57 +219,86 @@
             },
 
             // --- FASE DE CAPTURA ---
+           // --- FASE DE CAPTURA CORREGIDA ---
             capture: function() {
                 this.isScanning = false;
                 this.log("📸 Procesando imagen...");
 
-                // Determinamos qué imagen usar
-                let finalMat = new cv.Mat();
-                
-                // Leemos imagen LIMPIA del video (sin lineas amarillas)
-                this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
-                let imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
                 let srcMat = new cv.Mat(this.canvas.height, this.canvas.width, cv.CV_8UC4);
-                srcMat.data.set(imgData.data);
+                let finalMat = new cv.Mat();
+                let cropped = new cv.Mat();
 
-                if (this.detectedRect) {
-                    // Si hay detección, rotamos y cortamos
-                    let center = this.detectedRect.center;
-                    let size = this.detectedRect.size;
-                    let angle = this.detectedRect.angle;
+                try {
+                    // 1. Leemos imagen LIMPIA del video
+                    this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
+                    let imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+                    srcMat.data.set(imgData.data);
 
-                    if (angle < -45) {
-                        angle += 90;
-                        let tmp = size.width; size.width = size.height; size.height = tmp;
+                    if (this.detectedRect) {
+                        // --- LÓGICA DE ROTACIÓN Y RECORTE ---
+                        
+                        let center = this.detectedRect.center;
+                        let size = this.detectedRect.size;
+                        let angle = this.detectedRect.angle;
+
+                        // Ajustar ángulo para que el ticket quede vertical
+                        if (angle < -45) {
+                            angle += 90;
+                            let tmp = size.width; size.width = size.height; size.height = tmp;
+                        }
+                        
+                        // Añadir un pequeño margen (10%) para no cortar bordes del ticket
+                        size.width = size.width * 1.1;
+                        size.height = size.height * 1.1;
+
+                        // A. Crear Matriz de Rotación
+                        let M = cv.getRotationMatrix2D(center, angle, 1);
+                        
+                        // B. Rotar la imagen completa (WarpAffine sustituye a getRectSubPix)
+                        cv.warpAffine(srcMat, finalMat, M, srcMat.size(), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0,0,0,255));
+                        
+                        // C. Calcular coordenadas para recortar el centro (ROI)
+                        let x = Math.round(center.x - (size.width / 2));
+                        let y = Math.round(center.y - (size.height / 2));
+                        let w = Math.round(size.width);
+                        let h = Math.round(size.height);
+
+                        // D. Comprobaciones de seguridad (Para que no crashee si se sale del borde)
+                        if (x < 0) x = 0;
+                        if (y < 0) y = 0;
+                        if (x + w > finalMat.cols) w = finalMat.cols - x;
+                        if (y + h > finalMat.rows) h = finalMat.rows - y;
+
+                        // E. Recortar
+                        let rect = new cv.Rect(x, y, w, h);
+                        cropped = finalMat.roi(rect);
+                        
+                        // Mostrar en el canvas temporal para convertir a imagen
+                        cv.imshow('canvas-out', cropped);
+                        
+                        // Limpieza
+                        M.delete();
+                    } else {
+                        // Si no se detectó nada, pasamos la foto entera
+                        this.log("⚠️ No detectado, pasando foto completa");
+                        cv.imshow('canvas-out', srcMat);
                     }
-                    
-                    // Añadir un margen (padding) del 10% para no cortar texto
-                    size.width *= 1.1; 
-                    size.height *= 1.1;
 
-                    let M = cv.getRotationMatrix2D(center, angle, 1);
-                    cv.warpAffine(srcMat, finalMat, M, new cv.Size(this.canvas.width, this.canvas.height));
+                    // Convertir resultado a URL para el editor
+                    let dataUrl = this.canvas.toDataURL('image/jpeg');
                     
-                    // Extraer rect
-                    let cropped = new cv.Mat();
-                    cv.getRectSubPix(finalMat, size, center, cropped);
-                    
-                    // Mostrar en editor
-                    cv.imshow('canvas-out', cropped); // Usamos canvas-out temporalmente para convertir a URL
-                    cropped.delete();
-                    M.delete();
-                } else {
-                    // Si NO hay detección, pasamos la foto entera
-                    this.log("⚠️ No detectado, pasando foto completa");
-                    finalMat = srcMat.clone();
-                    cv.imshow('canvas-out', finalMat);
+                    // Abrir editor
+                    this.openEditor(dataUrl);
+
+                } catch (e) {
+                    this.log("❌ Error al procesar: " + e.message);
+                    console.error(e);
+                } finally {
+                    // Limpieza de memoria obligatoria
+                    if(srcMat) srcMat.delete();
+                    if(finalMat) finalMat.delete();
+                    if(cropped) cropped.delete();
                 }
-
-                let dataUrl = this.canvas.toDataURL('image/jpeg');
-                srcMat.delete(); finalMat.delete();
-
-                // Ir al editor
-                this.openEditor(dataUrl);
             },
 
             openEditor: function(url) {
