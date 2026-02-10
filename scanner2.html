@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scanner Pro V2</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #log { position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 5px; z-index: 10; font-size: 12px; pointer-events: none; }
+        canvas { width: 100vw; height: 100vh; object-fit: cover; }
+        #btnStart {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            padding: 15px 30px; background: #2196F3; color: white; border: none;
+            border-radius: 30px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            z-index: 20;
+        }
+        video { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="log">Cargando motor de visión...</div>
+    <button id="btnStart" disabled>INICIAR CÁMARA</button>
+    <video id="video" playsinline muted></video>
+    <canvas id="canvasOut"></canvas>
+
+    <script src="https://docs.opencv.org/4.8.0/opencv.js" async onload="onOpenCvReady();"></script>
+
+    <script>
+        const log = (t) => document.getElementById('log').innerText = t;
+        const btn = document.getElementById('btnStart');
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvasOut');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        let src, dst, gray, edges, contours, hierarchy, approx;
+        let isStreaming = false;
+
+        function onOpenCvReady() {
+            log("✅ Sistema listo.");
+            btn.removeAttribute('disabled');
+            btn.onclick = startCamera;
+        }
+
+        async function startCamera() {
+            try {
+                // Pedir cámara con preferencia de resolución HD para mejor OCR
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+
+                video.srcObject = stream;
+                await video.play();
+
+                // Ajustar canvas al tamaño real del video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+
+                initOpenCV();
+                btn.style.display = 'none';
+                log("📷 Buscando documento...");
+                requestAnimationFrame(processVideo);
+            } catch (err) {
+                log("❌ Error: " + err.message);
+            }
+        }
+
+        function initOpenCV() {
+            src = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
+            dst = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
+            gray = new cv.Mat();
+            edges = new cv.Mat(); // Matriz para detección de bordes
+            contours = new cv.MatVector();
+            hierarchy = new cv.Mat();
+            approx = new cv.Mat();
+            isStreaming = true;
+        }
+
+        function processVideo() {
+            if (!isStreaming) return;
+
+            try {
+                // 1. Dibujar video en canvas y pasar a Matriz OpenCV
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                src.data.set(imgData.data);
+
+                // 2. Pre-procesamiento (MEJORADO)
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+                
+                // CAMBIO CLAVE: Usar Canny en lugar de Threshold simple
+                // Esto detecta bordes por gradiente, no por color absoluto.
+                // Es mucho más resistente a sombras.
+                cv.Canny(gray, edges, 75, 200);
+
+                // 3. Encontrar contornos
+                // Usamos RETR_LIST para encontrar todos, luego filtramos
+                cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                let maxArea = 0;
+                let bestContour = null;
+
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+
+                    // Filtro de área mínima (ajustable según resolución)
+                    if (area > 5000) { 
+                        let peri = cv.arcLength(cnt, true);
+                        // Aproximar polígono
+                        cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+
+                        // Buscamos cuadriláteros (4 puntos)
+                        if (approx.rows === 4) {
+                            if (area > maxArea) {
+                                maxArea = area;
+                                // Guardamos una copia de los puntos, no el objeto Mat
+                                bestContour = approx.clone(); 
+                            }
+                        }
+                    }
+                }
+
+                // 4. Dibujar resultado
+                if (bestContour) {
+                    // Dibujar contorno encontrado en verde
+                    // Hay que envolverlo en un Vector para drawContours
+                    let tmpContourVector = new cv.MatVector();
+                    tmpContourVector.push_back(bestContour);
+                    
+                    // Dibujamos sobre la imagen original (src)
+                    cv.drawContours(src, tmpContourVector, 0, [0, 255, 0, 255], 3);
+                    
+                    // Limpieza inmediata
+                    bestContour.delete(); 
+                    tmpContourVector.delete();
+                    log("✅ Documento detectado");
+                } else {
+                    log("🔍 Buscando bordes...");
+                }
+
+                // 5. Mostrar resultado final en el canvas
+                cv.imshow('canvasOut', src);
+
+            } catch (err) {
+                console.error(err);
+            }
+
+            // Loop
+            requestAnimationFrame(processVideo);
+        }
+    </script>
+</body>
+</html>
