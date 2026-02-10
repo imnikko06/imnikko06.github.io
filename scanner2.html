@@ -3,41 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Scanner: Detector + Captura</title>
+    <title>Scanner: Corrección de Perspectiva</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         
-        /* Visor de Cámara */
         #container { position: relative; width: 100vw; height: 100vh; }
         canvas { width: 100%; height: 100%; object-fit: contain; }
         
-        /* Botones y UI */
         #ui-layer { position: absolute; bottom: 30px; width: 100%; text-align: center; pointer-events: none; }
         #btnSnap {
             pointer-events: auto;
-            background: #ff3b30; color: white; border: 4px solid white;
-            width: 70px; height: 70px; border-radius: 50%;
+            background: #2196F3; color: white; border: 4px solid white;
+            width: 80px; height: 80px; border-radius: 50%;
             font-size: 0; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
             display: inline-block;
         }
-        #btnSnap:active { transform: scale(0.9); background: #cc2f26; }
         
         #log { 
             position: absolute; top: 20px; width: 100%; text-align: center;
-            color: #0f0; text-shadow: 1px 1px 0 #000; font-weight: bold; font-size: 14px;
+            color: #0f0; text-shadow: 1px 1px 0 #000; font-weight: bold; font-size: 14px; z-index: 10;
         }
 
-        /* Pantalla de Resultado (Oculta al inicio) */
+        /* Pantalla de Resultado */
         #resultScreen {
             display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: #1c1c1e; z-index: 100; flex-direction: column; align-items: center; justify-content: center;
+            background: #111; z-index: 100; flex-direction: column; align-items: center; justify-content: center;
         }
         #resultCanvas {
-            max-width: 90%; max-height: 80%; border: 2px solid #fff; margin-bottom: 20px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            max-width: 95%; max-height: 85%; border: 2px solid #fff; margin-bottom: 20px;
         }
         #btnBack {
-            padding: 15px 40px; background: #333; color: white; border: 1px solid #555;
+            padding: 15px 40px; background: #444; color: white; border: none;
             border-radius: 8px; font-size: 16px; cursor: pointer;
         }
 
@@ -47,19 +43,17 @@
 <body>
 
     <div id="container">
-        <div id="log">Iniciando sistema...</div>
+        <div id="log">Cargando lógica de escaneo...</div>
         <video id="video" playsinline muted></video>
         <canvas id="canvasOut"></canvas>
-        
         <div id="ui-layer">
-            <button id="btnSnap">CAPTURAR</button>
+            <button id="btnSnap">ESCANEAR</button>
         </div>
     </div>
 
     <div id="resultScreen">
-        <h2 style="color:white; margin-top:0;">Captura Detectada</h2>
         <canvas id="resultCanvas"></canvas>
-        <button id="btnBack">🔄 Escanear otro</button>
+        <button id="btnBack">❌ Cerrar y Repetir</button>
     </div>
 
     <script src="https://docs.opencv.org/4.8.0/opencv.js" async onload="onOpenCvReady();"></script>
@@ -70,32 +64,31 @@
         const canvas = document.getElementById('canvasOut');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         
-        // Elementos de Resultado
+        // Elementos Resultado
         const resScreen = document.getElementById('resultScreen');
         const resCanvas = document.getElementById('resultCanvas');
         const btnSnap = document.getElementById('btnSnap');
         const btnBack = document.getElementById('btnBack');
 
         let src, gray, binary, contours, hierarchy, hull;
+        let detectedContour = null; // Guardará los 4 puntos detectados
         let isStreaming = false;
-        let currentRect = null; // Aquí guardaremos las coordenadas del ticket detectado
 
         function onOpenCvReady() {
-            log("Cámara iniciándose...");
+            log("📷 Iniciando cámara...");
             startCamera();
         }
 
         async function startCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+                    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
                 });
                 video.srcObject = stream;
                 await video.play();
 
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
-
                 initOpenCV();
                 requestAnimationFrame(processVideo);
             } catch (err) {
@@ -109,7 +102,6 @@
             binary = new cv.Mat();
             contours = new cv.MatVector();
             hierarchy = new cv.Mat();
-            hull = new cv.MatVector();
             isStreaming = true;
         }
 
@@ -121,108 +113,144 @@
                 let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 src.data.set(imgData.data);
 
-                // --- PROCESAMIENTO ROBUSTO (Anti-Arrugas) ---
+                // 1. Pre-procesamiento para tickets difíciles
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                
-                // Blur fuerte para eliminar letras
-                cv.GaussianBlur(gray, gray, new cv.Size(9, 9), 0);
-                
-                // Threshold adaptativo (Mejor para sombras/arrugas)
-                cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+                cv.Canny(gray, binary, 75, 200); // Usamos Canny para bordes fuertes
 
-                // Dilatar para unir trozos rotos por arrugas
-                let M = cv.Mat.ones(5, 5, cv.CV_8U);
+                // Dilatamos para unir líneas discontinuas del ticket arrugado
+                let M = cv.Mat.ones(3, 3, cv.CV_8U);
                 cv.dilate(binary, binary, M, new cv.Point(-1, -1), 2);
                 M.delete();
 
-                // Buscar contornos
                 cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
                 let maxArea = 0;
-                let maxIndex = -1;
+                let bestContour = null;
 
-                // Encontrar el objeto más grande
+                // 2. Buscar el contorno más grande
                 for (let i = 0; i < contours.size(); ++i) {
-                    let area = cv.contourArea(contours.get(i));
-                    if (area > 30000) { // Filtro de tamaño mínimo
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    if (area > 50000) { // Filtro de tamaño
                         if (area > maxArea) {
                             maxArea = area;
-                            maxIndex = i;
+                            bestContour = cnt;
                         }
                     }
                 }
 
-                currentRect = null; // Reset
+                detectedContour = null;
 
-                if (maxIndex !== -1) {
-                    let cnt = contours.get(maxIndex);
+                if (bestContour) {
+                    // 3. Truco para arrugas: Usar Convex Hull y aproximar a 4 puntos
+                    let hull = new cv.Mat();
+                    cv.convexHull(bestContour, hull, false, true);
                     
-                    // 1. Obtener Envoltorio Convexo (Ignora arrugas hacia adentro)
-                    let tmpHull = new cv.Mat();
-                    cv.convexHull(cnt, tmpHull, false, true);
+                    let peri = cv.arcLength(hull, true);
+                    let approx = new cv.Mat();
                     
-                    // 2. Obtener Rectángulo delimitador (Bounding Box)
-                    // Esto nos da x, y, ancho y alto para recortar después
-                    let rect = cv.boundingRect(tmpHull);
-                    currentRect = rect; // Guardamos para usarlo al capturar
-
-                    // Visualización:
-                    // Dibujamos el contorno exacto en VERDE
-                    let hullVec = new cv.MatVector();
-                    hullVec.push_back(tmpHull);
-                    cv.drawContours(src, hullVec, 0, [0, 255, 0, 255], 2);
+                    // Intentamos aproximar el Hull a un cuadrilátero (4 puntos)
+                    // Jugamos con la precisión (epsilon) hasta encontrar 4 esquinas
+                    cv.approxPolyDP(hull, approx, 0.02 * peri, true);
                     
-                    // Dibujamos el rectángulo de corte en ROJO (lo que se capturará)
-                    let pt1 = new cv.Point(rect.x, rect.y);
-                    let pt2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
-                    cv.rectangle(src, pt1, pt2, [255, 0, 0, 255], 3);
-
-                    log("✅ Ticket detectado - Pulsa CAPTURAR");
+                    // Si tiene 4 esquinas, es perfecto. Si tiene más, es que está muy arrugado.
+                    // Si tiene 4, lo guardamos.
+                    if (approx.rows === 4) {
+                        detectedContour = approx.clone(); // Guardamos para la captura
+                        
+                        // Dibujar contorno VERDE para indicar éxito
+                        drawPoly(src, approx, [0, 255, 0, 255]);
+                        log("✅ LISTO PARA ESCANEAR");
+                    } else {
+                         // Si no encuentra 4 esquinas exactas, dibujamos el Hull en amarillo
+                         // (Significa: "Te veo, pero acércate o aplana un poco")
+                         let tmpVec = new cv.MatVector();
+                         tmpVec.push_back(hull);
+                         cv.drawContours(src, tmpVec, 0, [255, 255, 0, 255], 2);
+                         tmpVec.delete();
+                         log("⚠️ Intenta aplanar el ticket");
+                    }
                     
-                    hullVec.delete(); 
-                    tmpHull.delete();
+                    hull.delete();
+                    approx.delete();
                 } else {
-                    log("🔍 Buscando ticket...");
+                    log("🔍 Buscando bordes...");
                 }
 
                 cv.imshow('canvasOut', src);
 
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
             requestAnimationFrame(processVideo);
         }
 
-        // --- LÓGICA DE CAPTURA Y RECORTE ---
+        // Función auxiliar para dibujar polígonos
+        function drawPoly(img, poly, color) {
+            ctx.beginPath();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = `rgba(${color[0]},${color[1]},${color[2]},1)`;
+            let pts = poly.data32S;
+            ctx.moveTo(pts[0], pts[1]);
+            for(let i=2; i < pts.length; i+=2) ctx.lineTo(pts[i], pts[i+1]);
+            ctx.closePath();
+            ctx.stroke();
+        }
+
+        // --- LÓGICA DE TRANSFORMACIÓN DE PERSPECTIVA ---
         btnSnap.onclick = () => {
-            if (!currentRect) {
-                alert("No se ha detectado ningún ticket. Intenta acercarte o mejorar la luz.");
+            if (!detectedContour) {
+                alert("Espera a que el borde se ponga VERDE");
                 return;
             }
+            isStreaming = false;
 
-            isStreaming = false; // Pausar video
+            // 1. Obtener las coordenadas de las esquinas detectadas
+            let coords = [];
+            for (let i = 0; i < 4; i++) {
+                coords.push({ x: detectedContour.data32S[i * 2], y: detectedContour.data32S[i * 2 + 1] });
+            }
 
-            // 1. Añadir margen de seguridad (Padding)
-            // Para no cortar el ticket justo al borde si la detección falló por 1mm
-            let padding = 20; 
-            let x = Math.max(currentRect.x - padding, 0);
-            let y = Math.max(currentRect.y - padding, 0);
-            let w = Math.min(currentRect.width + (padding*2), src.cols - x);
-            let h = Math.min(currentRect.height + (padding*2), src.rows - y);
+            // 2. Ordenar esquinas: Top-Left, Top-Right, Bottom-Right, Bottom-Left
+            // Esto es crucial para que el ticket no salga girado
+            coords.sort((a,b) => a.y - b.y); // Ordenar por Y
+            // Primeros 2 son top, ultimos 2 son bottom
+            let tl = coords[0].x < coords[1].x ? coords[0] : coords[1];
+            let tr = coords[0].x < coords[1].x ? coords[1] : coords[0];
+            let bl = coords[2].x < coords[3].x ? coords[2] : coords[3];
+            let br = coords[2].x < coords[3].x ? coords[3] : coords[2];
+
+            // 3. Preparar matrices para WarpPerspective
+            let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
             
-            let rectWithPadding = new cv.Rect(x, y, w, h);
-
-            // 2. Recortar (ROI - Region of Interest)
-            let cropped = src.roi(rectWithPadding);
-
-            // 3. Mostrar en el canvas de resultado
-            cv.imshow('resultCanvas', cropped);
+            // Definir tamaño de salida (puedes ajustar esto o calcularlo dinámicamente)
+            let w = Math.max(Math.hypot(br.x-bl.x, br.y-bl.y), Math.hypot(tr.x-tl.x, tr.y-tl.y));
+            let h = Math.max(Math.hypot(tr.x-br.x, tr.y-br.y), Math.hypot(tl.x-bl.x, tl.y-bl.y));
             
-            // Limpieza
-            cropped.delete();
+            let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, w, 0, w, h, 0, h]);
+            
+            // 4. Aplicar Transformación
+            let M = cv.getPerspectiveTransform(srcTri, dstTri);
+            let finalDst = new cv.Mat();
+            
+            // Aquí ocurre la magia: "Planchar" la imagen
+            // Usamos la imagen ORIGINAL (sin dibujar lineas verdes encima), 
+            // por eso tendríamos que haber guardado una copia limpia antes o...
+            // simplemente limpiamos el video para la foto.
+            // Para simplificar, usaremos 'src' (tendrá las lineas verdes si no lo limpiamos).
+            // TRUCO: Volvemos a leer del video para tener una imagen limpia
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            let cleanImgData = ctx.getImageData(0,0, canvas.width, canvas.height);
+            let cleanMat = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
+            cleanMat.data.set(cleanImgData.data);
 
-            // 4. Cambiar UI
+            cv.warpPerspective(cleanMat, finalDst, M, new cv.Size(w, h), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+
+            // 5. Mostrar resultado
+            cv.imshow('resultCanvas', finalDst);
             resScreen.style.display = 'flex';
+
+            // Limpieza de memoria
+            srcTri.delete(); dstTri.delete(); M.delete(); finalDst.delete(); cleanMat.delete();
         };
 
         btnBack.onclick = () => {
@@ -230,7 +258,6 @@
             isStreaming = true;
             requestAnimationFrame(processVideo);
         };
-
     </script>
 </body>
 </html>
