@@ -42,7 +42,7 @@
   height: 100%;
 }
 
-//Animacion 2D p1
+/*Animacion 2D p1*/
 .room-card:hover {
   transform: scale(1.03) translateY(-5px);
   box-shadow: 0 15px 25px rgba(0, 0, 0, 0.15);
@@ -91,14 +91,14 @@
   border: none;
   cursor: pointer;
 }
-// Animacion 2D p2
+/*Animacion 2D p2*/
 .btn-ver:hover {
   background-color: #ff9900 !important;
   color: #fff !important;
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(255, 153, 0, 0.4);
 }
-//3d
+/*3d*/
 .img-3d-wrapper {
   perspective: 1000px;
   overflow: hidden; 
@@ -114,7 +114,7 @@
   transform: scale(1.05) rotateY(-8deg) rotateX(4deg);
 }
 
-//Clases para la animaion js
+/*Clases para la animacion JS*/
 .reveal-on-scroll {
   opacity: 0;
   transform: translateY(40px);
